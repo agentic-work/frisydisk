@@ -72,7 +72,31 @@ interface can be developed and tested in an ordinary browser.
 `?scan=/path&mode=sankey&tab=types` in the URL, or `--scan PATH --mode sankey
 --tab types` on the app's command line, opens straight into a scan.
 
-## Signed macOS release
+## Download
+
+Installers are on the [Releases](https://github.com/agentic-work/frisydisk/releases) page:
+a `-setup.exe` for Windows and a universal `.dmg` for macOS.
+
+- Windows: the installer is not code signed, so SmartScreen shows "Windows
+  protected your PC". Choose **More info**, then **Run anyway**.
+- macOS: if the build is not notarised, right-click the app and choose **Open**
+  the first time.
+
+## Cutting a release
+
+```sh
+# bump "version" in src-tauri/tauri.conf.json, Cargo.toml and package.json, then:
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` builds both installers on GitHub's runners and
+attaches them to a draft release; publish the draft when it looks right. To have
+the macOS build Developer ID signed and notarised in CI, add these repository
+secrets: `APPLE_CERTIFICATE` (base64 of the .p12), `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY` (the key id) and
+`APPLE_API_KEY_P8` (the contents of the .p8 file).
+
+## Signed macOS release, built locally
 
 ```sh
 scripts/release-macos.sh install
