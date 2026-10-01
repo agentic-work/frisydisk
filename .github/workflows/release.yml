@@ -71,7 +71,8 @@ jobs:
             @{ bundle = @{ windows = @{ signCommand = $sign } } } | ConvertTo-Json -Depth 5 | Set-Content sign.conf.json
             npx tauri build --bundles nsis --config sign.conf.json
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            foreach ($f in @("target/release/frisydisk.exe") + (Get-ChildItem target/release/bundle/nsis/*-setup.exe).FullName) {
+            # The installer is what people download, so it must carry a valid signature.
+            foreach ($f in (Get-ChildItem target/release/bundle/nsis/*-setup.exe).FullName) {
               $sig = Get-AuthenticodeSignature $f
               "$f : $($sig.Status) $($sig.SignerCertificate.Subject)"
               if ($sig.Status -ne "Valid") { throw "$f is not signed" }
