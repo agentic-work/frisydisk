@@ -99,6 +99,7 @@ final class AppModel: ObservableObject {
     private var analysisGeneration = 0
     private var snapshotPath: String?
     private var adviseOnFinish = false
+    private var testTrashChild: String?
 
     var tree: ScanTree? { scanner?.tree }
     var collectorSize: Int64 { collector.reduce(0) { $0 + $1.node.size } }
@@ -150,6 +151,19 @@ final class AppModel: ObservableObject {
         scanSeconds = Date().timeIntervalSince(scanStart)
         rebuild()
         refreshAnalysis()
+        if let name = testTrashChild {
+            // Scripted test of the collector: stage one named child of the scan root and trash it.
+            testTrashChild = nil
+            if let node = s.tree.root.children.first(where: { $0.name == name }) {
+                stage(node)
+                let staged = collector.count
+                trashCollector()
+                print("test-trash: staged=\(staged) root=\(s.tree.root.size) notice=\(notice ?? "")")
+                notice = nil
+            } else {
+                print("test-trash: no child named \(name)")
+            }
+        }
         if adviseOnFinish {
             adviseOnFinish = false
             tab = .advisor
@@ -508,7 +522,8 @@ final class AppModel: ObservableObject {
 
     // MARK: - Launch arguments (used for scripted testing)
 
-    /// `--scan PATH`, `--mode treemap`, `--tab largest`, `--advise`, `--snapshot OUT.png`
+    /// `--scan PATH`, `--mode treemap`, `--tab largest`, `--advise`, `--snapshot OUT.png`,
+    /// `--test-trash-child NAME` (moves that child of the scan root to the Trash without asking)
     func handleLaunchArguments() {
         let args = CommandLine.arguments
         func value(_ name: String) -> String? {
@@ -523,6 +538,7 @@ final class AppModel: ObservableObject {
         }
         snapshotPath = value("--snapshot")
         adviseOnFinish = args.contains("--advise")
+        testTrashChild = value("--test-trash-child")
         if let path = value("--scan") {
             startScan(path: (path as NSString).expandingTildeInPath)
         } else {

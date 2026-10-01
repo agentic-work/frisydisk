@@ -299,7 +299,7 @@ private struct TypesList: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(b.category).fontWeight(.medium)
-                                Text("\(Fmt.count(b.count)) files").font(.caption).foregroundStyle(.secondary)
+                                Text("\(Fmt.count(b.count)) file\(b.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                                 Text(Fmt.bytes(b.bytes)).monospacedDigit().foregroundStyle(.secondary)
                             }
