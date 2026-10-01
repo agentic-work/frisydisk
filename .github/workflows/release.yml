@@ -50,9 +50,36 @@ jobs:
       - run: npm ci
       - run: cargo test -p frisy-core
 
+      # With the Azure secrets set, the app and its installer are signed through
+      # Azure Artifact Signing, so SmartScreen shows the publisher instead of a
+      # warning. Without them the build is unsigned.
       - name: Build the Windows installer
         if: runner.os == 'Windows'
-        run: npx tauri build --bundles nsis
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          if ($env:AZURE_CLIENT_SECRET -and $env:SIGNING_PROFILE) {
+            "Azure Artifact Signing is on"
+            cargo install trusted-signing-cli --locked
+            $sign = "trusted-signing-cli -e $env:SIGNING_ENDPOINT -a $env:SIGNING_ACCOUNT -c $env:SIGNING_PROFILE -d FrisyDisk %1"
+            @{ bundle = @{ windows = @{ signCommand = $sign } } } | ConvertTo-Json -Depth 5 | Set-Content sign.conf.json
+            npx tauri build --bundles nsis --config sign.conf.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            foreach ($f in @("target/release/frisydisk.exe") + (Get-ChildItem target/release/bundle/nsis/*-setup.exe).FullName) {
+              $sig = Get-AuthenticodeSignature $f
+              "$f : $($sig.Status) $($sig.SignerCertificate.Subject)"
+              if ($sig.Status -ne "Valid") { throw "$f is not signed" }
+            }
+          } else {
+            "No Azure signing secrets: the installer is unsigned"
+            npx tauri build --bundles nsis
+          }
 
       # One DMG that runs on both Apple silicon and Intel Macs. With the Apple
       # secrets set it is Developer ID signed and notarised; without them it is

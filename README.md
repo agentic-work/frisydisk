@@ -77,8 +77,9 @@ interface can be developed and tested in an ordinary browser.
 Installers are on the [Releases](https://github.com/agentic-work/frisydisk/releases) page:
 a `-setup.exe` for Windows and a universal `.dmg` for macOS.
 
-- Windows: the installer is not code signed, so SmartScreen shows "Windows
-  protected your PC". Choose **More info**, then **Run anyway**.
+- Windows: release builds are signed through Azure Artifact Signing when the
+  repository has the Azure secrets; a build without them is unsigned and
+  SmartScreen shows "Windows protected your PC" (**More info**, then **Run anyway**).
 - macOS: if the build is not notarised, right-click the app and choose **Open**
   the first time.
 
@@ -95,6 +96,11 @@ the macOS build Developer ID signed and notarised in CI, add these repository
 secrets: `APPLE_CERTIFICATE` (base64 of the .p12), `APPLE_CERTIFICATE_PASSWORD`,
 `APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`, `APPLE_API_KEY` (the key id) and
 `APPLE_API_KEY_P8` (the contents of the .p8 file).
+
+For Windows signing, add secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and
+`AZURE_CLIENT_SECRET` for a service principal holding the *Artifact Signing
+Certificate Profile Signer* role on your certificate profile, and variables
+`AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`.
 
 ## Signed macOS release, built locally
 
