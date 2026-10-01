@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>FrisyDisk</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<main id="start" class="screen">
+  <div class="start-inner">
+    <header class="brand">
+      <img src="icon.png" alt="" width="72" height="72">
+      <div>
+        <h1>FrisyDisk</h1>
+        <p>See what is using your disks. Pick a volume, or drop a folder on this window.</p>
+      </div>
+    </header>
+
+    <ul id="volumes" class="volumes" aria-label="Volumes"></ul>
+
+    <form id="path-form" class="path-form">
+      <button type="button" id="scan-home">Scan home folder</button>
+      <button type="button" id="browse">Choose folder…</button>
+      <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="or paste a folder path" aria-label="Folder path">
+      <button type="submit" class="primary">Scan</button>
+    </form>
+  </div>
+</main>
+
+<main id="scan" class="screen" hidden>
+  <nav class="topbar" aria-label="Location">
+    <button id="back" title="Back to all volumes">‹ Volumes</button>
+    <button id="up" title="Enclosing folder" aria-label="Enclosing folder">↑</button>
+    <ol id="crumbs" class="crumbs"></ol>
+    <div class="segmented" id="modes" role="tablist" aria-label="Chart type">
+      <button data-mode="sunburst" role="tab">Sunburst</button>
+      <button data-mode="treemap" role="tab">Treemap</button>
+      <button data-mode="sankey" role="tab">Sankey</button>
+    </div>
+    <button id="rescan" title="Scan again">Rescan</button>
+  </nav>
+
+  <div class="workspace">
+    <section class="stage">
+      <div class="stage-canvas">
+        <canvas id="chart" aria-label="Disk usage chart"></canvas>
+        <div id="hub" class="hub" hidden>
+          <div id="hub-name" class="hub-name"></div>
+          <div id="hub-size" class="hub-size"></div>
+          <div id="hub-files" class="hub-files"></div>
+        </div>
+        <p id="empty" class="empty" hidden>This folder is empty.</p>
+        <p id="sankey-note" class="chart-note" hidden>Folders holding under 3.5% of this view are not opened up.</p>
+      </div>
+      <footer id="status" class="status"></footer>
+    </section>
+
+    <aside class="panel">
+      <div class="segmented tabs" id="tabs" role="tablist">
+        <button data-tab="contents" role="tab">Contents</button>
+        <button data-tab="largest" role="tab">Largest</button>
+        <button data-tab="types" role="tab">Types</button>
+        <button data-tab="advisor" role="tab">Advisor</button>
+      </div>
+      <div class="search" id="search-wrap">
+        <input id="search" type="search" placeholder="Search in this folder" spellcheck="false" autocomplete="off">
+      </div>
+      <div id="list" class="list"></div>
+
+      <div id="advisor" class="advisor" hidden>
+        <div class="advisor-head">
+          <select id="backend" aria-label="Model"></select>
+          <span class="spacer"></span>
+          <button id="advisor-stop" hidden>Stop</button>
+          <button id="advisor-reset" hidden>Start over</button>
+        </div>
+        <div id="advisor-body" class="advisor-body"></div>
+        <form id="advisor-form" class="advisor-form" hidden>
+          <input id="advisor-input" type="text" placeholder="Ask a follow-up" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+      </div>
+
+      <div id="collector" class="collector" hidden>
+        <div>
+          <strong>Collector</strong>
+          <span id="collector-summary"></span>
+        </div>
+        <span class="spacer"></span>
+        <button id="collector-review">Review</button>
+        <button id="collector-trash" class="warn">Move to Trash…</button>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<div id="menu" class="menu" hidden role="menu"></div>
+<div id="modal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

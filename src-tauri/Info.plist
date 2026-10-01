@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSDesktopFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Desktop folder.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Documents folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Downloads folder.</string>
+    <key>NSNetworkVolumesUsageDescription</key><string>FrisyDisk measures the size of files on network volumes you choose to scan.</string>
+    <key>NSRemovableVolumesUsageDescription</key><string>FrisyDisk measures the size of files on removable volumes you choose to scan.</string>
+</dict>
+</plist>

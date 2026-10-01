@@ -1,5 +1,9 @@
-.build/
+target/
 build/
+dist/
+node_modules/
 .DS_Store
-*.xcodeproj
+src-tauri/gen/
+.playwright-mcp/
+.build/
 .swiftpm/

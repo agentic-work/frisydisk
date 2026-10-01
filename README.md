@@ -1,46 +1,79 @@
 # FrisyDisk
 
-A native macOS app that shows what is using your disks, as an interactive sunburst or treemap.
-In the spirit of DaisyDisk, written from scratch in Swift and SwiftUI.
+See what is using your disks, on macOS and Windows. One Rust scanner, one web
+interface, packaged with Tauri.
 
 ## What it does
 
-- Scans a volume or folder in parallel (about 4 M files in 20 s on an M4 Pro) and draws the chart while it scans.
-- Sunburst and treemap views of the same data, with a synced list. Click a folder to drill in.
-- Search, a largest-files list and a file-type breakdown for whatever folder you are in.
-- Collector: stage items, review them, then move them to the Trash after a confirmation. Nothing is deleted permanently.
-- Advisor: sends the scan and a summary of your volumes (including NAS shares) to a model running on your Mac
-  and asks for non-destructive ways to improve I/O and use existing storage better. It only produces text.
-  Uses Ollama at `127.0.0.1:11434`, or the `agenticode` CLI if it launches.
+- Scans a volume or folder in parallel and draws the chart while it scans.
+- Three views of the same data: sunburst, treemap, and a Sankey flow that opens
+  up only the largest folders.
+- A synced list, search, a largest-files list and a file-type breakdown for
+  whatever folder you are in.
+- Collector: stage items, review them, then move them to the Trash (Recycle Bin
+  on Windows) after a confirmation. Nothing is deleted permanently.
+- Advisor: sends the scan and a summary of your volumes, including NAS shares,
+  to a model running on your own computer and asks for non-destructive ways to
+  improve I/O and use existing storage better. It only produces text, and any
+  command in an answer that would delete data is flagged. Uses Ollama at
+  `127.0.0.1:11434`, or the `agenticode` CLI when it is installed.
 
-## Build and install
+## Build
 
-Needs macOS 14 or later and the Xcode Command Line Tools.
+You need Rust, Node 20 or later, and the platform tools Tauri asks for
+(Xcode Command Line Tools on macOS; the MSVC build tools and WebView2 on Windows).
 
 ```sh
-Scripts/build.sh test      # build and run the unit tests
-Scripts/build.sh install   # build build/FrisyDisk.app and copy it to /Applications
+npm ci
+npm test            # Rust core tests and the layout tests
+npx tauri dev       # run the app from source
+npx tauri build     # build an installer for this platform
 ```
 
-The app is ad-hoc signed, so it runs on the Mac that built it. It is not notarised.
+## Layout
 
-To let it read protected folders, add FrisyDisk under System Settings → Privacy & Security → Full Disk Access, then rescan.
+| Path | What is there |
+| --- | --- |
+| `crates/frisy-core` | Scanner, tree, analysis, advisor and the JSON API. No UI. |
+| `crates/frisy-core/src/bin/frisyscan.rs` | Command-line scanner and development server. |
+| `ui/` | The interface: plain HTML, CSS and JavaScript modules, no bundler. |
+| `src-tauri/` | The desktop shell. It forwards one `api` command to the core. |
+| `scripts/` | Icon drawing and the signed macOS release. |
 
 ## Command line
 
 ```sh
-build/frisyscan ~/Projects --top 20     # totals and the largest children
-build/frisyscan --facts                 # the machine report the advisor sees
-build/frisyscan ~ --advise gemma4:latest
+cargo run --release --bin frisyscan -- ~/Projects --top 20   # totals and largest children
+cargo run --release --bin frisyscan -- --facts               # what the advisor is told about this machine
+cargo run --release --bin frisyscan -- ~ --advise            # scan, then ask the first local model
+cargo run --release --bin frisyscan -- serve                 # the UI in a browser at http://127.0.0.1:7878
 ```
 
-## Scripted runs
+`serve` exposes the same API the app uses, bound to localhost only, so the
+interface can be developed and tested in an ordinary browser.
+`?scan=/path&mode=sankey&tab=types` in the URL, or `--scan PATH --mode sankey
+--tab types` on the app's command line, opens straight into a scan.
 
-The app accepts `--scan PATH`, `--mode treemap`, `--tab largest|types|advisor`, `--advise` and
-`--snapshot OUT.png` (save the window and quit). `--test-trash-child NAME` moves that child of
-the scan root to the Trash without asking; it exists for testing.
+## Signed macOS release
 
-## Limits
+```sh
+scripts/release-macos.sh install
+```
 
-- Sizes are allocated bytes. APFS clones are counted at full size each, as `du` does.
-- A whole-disk total is lower than `df`: snapshots, swap and folders the app cannot read are not in it.
+Builds the app, signs it with a Developer ID certificate (hardened runtime,
+secure timestamp), notarises and staples it, and wraps it in a signed,
+notarised DMG. The header of the script lists the credentials it expects.
+
+## What the numbers mean
+
+- macOS and Linux: bytes allocated on disk; hard links are counted once.
+  APFS clones are counted at full size each, as `du` does.
+- Windows: logical file sizes; files that exist only in the cloud (OneDrive
+  placeholders) count as zero. Junctions and symlinks are not followed.
+- A whole-disk total is lower than the system's "used" figure: snapshots, swap
+  and folders the app cannot read are not in it. On macOS, grant Full Disk
+  Access to see protected folders.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
