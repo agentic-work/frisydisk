@@ -25,6 +25,11 @@ A disk-space visualiser for macOS and Windows, original code, open source (MIT).
 - **Sankey shows only the largest folders**: a folder gets a next column only when
   it holds at least 3.5% of the focused folder; the rest merge into "other".
 
+- **Advisor providers are optional.** Local Ollama is detected; a remote Ollama
+  address, AgenticWork, Anthropic and OpenAI are configured in settings. With no
+  usable provider the Advisor tab is hidden. Keys stay in the core: the UI can
+  set or clear them but never reads them back, and requests are made from Rust.
+
 ## Safety rules
 
 - The only thing that changes the disk is "Move to Trash" in the collector, after
@@ -32,4 +37,6 @@ A disk-space visualiser for macOS and Windows, original code, open source (MIT).
 - The advisor only produces text. Its prompt forbids destructive suggestions, and
   because models do not always comply, answers are checked and any deleting
   command is flagged.
-- The dev server binds to 127.0.0.1 only.
+- When a provider is not on this computer, the UI says the scan summary leaves it.
+- The dev server binds to 127.0.0.1, refuses requests from other origins or host
+  names, and serves only files inside the UI folder.

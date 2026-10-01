@@ -1,11 +1,10 @@
 //! Asks a model running on this machine for storage and I/O suggestions.
 //! The advisor only ever produces text; nothing it suggests is run.
 
-use crate::facts;
+use crate::settings::Settings;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Read};
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -18,10 +17,13 @@ pub struct Message {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Backend {
-    /// "ollama" or "agenticode"
+    /// "ollama", "agenticwork", "anthropic" or "openai"
     pub kind: String,
     pub model: String,
     pub label: String,
+    /// The scan summary leaves this computer when this backend is used.
+    #[serde(default)]
+    pub remote: bool,
 }
 
 pub fn system_prompt() -> String {
@@ -95,16 +97,35 @@ pub fn destructive_lines(answer: &str) -> Vec<String> {
         .collect()
 }
 
-pub const OLLAMA: &str = "http://127.0.0.1:11434";
+pub const ANTHROPIC: &str = "https://api.anthropic.com";
+pub const OPENAI: &str = "https://api.openai.com";
+/// Used when a provider's model list cannot be fetched.
+pub const ANTHROPIC_DEFAULT_MODEL: &str = "claude-opus-5-5";
+pub const OPENAI_DEFAULT_MODEL: &str = "gpt-4o";
+pub const AGENTICWORK_DEFAULT_MODEL: &str = "auto";
 
-fn agent(timeout_secs: u64) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout_read(Duration::from_secs(timeout_secs))
-        .build()
+fn agent(read_secs: u64) -> ureq::Agent {
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(4)).timeout_read(Duration::from_secs(read_secs)).build()
 }
 
-/// Text-capable Ollama models installed locally, biggest first. Empty when Ollama is not running.
+fn http_error(who: &str, e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(code, r) => {
+            let body = r.into_string().unwrap_or_default();
+            let detail = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().or(v["message"].as_str()).or(v["error"].as_str()).map(String::from))
+                .unwrap_or_else(|| body.chars().take(300).collect());
+            match code {
+                401 | 403 => format!("{who} rejected the API key (HTTP {code}). {detail}"),
+                _ => format!("{who} returned HTTP {code}. {detail}"),
+            }
+        }
+        other => format!("Could not reach {who}: {other}"),
+    }
+}
+
+/// Text-capable Ollama models at `base`, biggest first. Empty when Ollama is not reachable.
 pub fn ollama_models(base: &str) -> Vec<String> {
     let Ok(resp) = agent(5).get(&format!("{base}/api/tags")).call() else { return Vec::new() };
     let Ok(body) = resp.into_json::<serde_json::Value>() else { return Vec::new() };
@@ -125,33 +146,93 @@ pub fn ollama_models(base: &str) -> Vec<String> {
     models.into_iter().map(|m| m.1).collect()
 }
 
-/// Path of an agenticode CLI that actually launches, if any.
-pub fn agenticode_cli() -> Option<String> {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
-    let exe = if cfg!(windows) { "agenticode.exe" } else { "agenticode" };
-    [format!("{home}/.local/bin/{exe}"), format!("/usr/local/bin/{exe}"), format!("/opt/homebrew/bin/{exe}")]
-        .into_iter()
-        .find(|p| std::path::Path::new(p).is_file() && facts::run(p, &["--version"], Duration::from_secs(8), 200).is_some())
+/// Model ids from an OpenAI-style or Anthropic `/v1/models` endpoint.
+fn list_models(base: &str, headers: &[(&str, &str)]) -> Option<Vec<String>> {
+    let mut req = agent(6).get(&format!("{base}/v1/models"));
+    for (k, v) in headers {
+        req = req.set(k, v);
+    }
+    let body = req.call().ok()?.into_json::<serde_json::Value>().ok()?;
+    Some(body["data"].as_array()?.iter().filter_map(|m| {
+        // AgenticWork lists image and embedding models too; keep chat ones.
+        let kind = m["model_type"].as_str().unwrap_or("chat");
+        (kind == "chat").then(|| m["id"].as_str().map(String::from)).flatten()
+    }).collect())
 }
 
-pub fn backends() -> Vec<Backend> {
-    let mut out = Vec::new();
-    if agenticode_cli().is_some() {
-        out.push(Backend { kind: "agenticode".into(), model: String::new(), label: "agenticode".into() });
+fn backend(kind: &str, model: &str, label: String, remote: bool) -> Backend {
+    Backend { kind: kind.into(), model: model.into(), label, remote }
+}
+
+/// Put `first` at the front of the list, adding it if the list is empty.
+fn prefer(mut models: Vec<String>, first: &str) -> Vec<String> {
+    if let Some(i) = models.iter().position(|m| m == first) {
+        let m = models.remove(i);
+        models.insert(0, m);
+    } else if models.is_empty() {
+        models.push(first.into());
     }
-    for m in ollama_models(OLLAMA) {
-        out.push(Backend { kind: "ollama".into(), label: format!("Ollama: {m}"), model: m });
+    models
+}
+
+/// Every model the advisor can use with these settings. Empty means the
+/// advisor has nothing to talk to, and the UI hides it.
+pub fn backends(settings: &Settings) -> Vec<Backend> {
+    if !settings.advisor_enabled {
+        return Vec::new();
     }
-    out
+    let s = settings;
+    std::thread::scope(|scope| {
+        let ollama = scope.spawn(|| {
+            let local = crate::settings::is_local(&s.ollama_host);
+            let place = if local { "Ollama".to_string() } else { format!("Ollama at {}", s.ollama_host.split("://").nth(1).unwrap_or(&s.ollama_host)) };
+            ollama_models(&s.ollama_host).into_iter().map(|m| backend("ollama", &m, format!("{place}: {m}"), !local)).collect::<Vec<_>>()
+        });
+        let agenticwork = scope.spawn(|| {
+            if s.agenticwork_key.is_empty() || s.agenticwork_url.is_empty() {
+                return Vec::new();
+            }
+            let auth = format!("Bearer {}", s.agenticwork_key);
+            let models = list_models(&s.agenticwork_url, &[("Authorization", &auth)]).unwrap_or_default();
+            prefer(models, AGENTICWORK_DEFAULT_MODEL).into_iter().take(40).map(|m| backend("agenticwork", &m, format!("AgenticWork: {m}"), true)).collect()
+        });
+        let anthropic = scope.spawn(|| {
+            if s.anthropic_key.is_empty() {
+                return Vec::new();
+            }
+            let models = list_models(ANTHROPIC, &[("x-api-key", &s.anthropic_key), ("anthropic-version", "2023-06-01")]).unwrap_or_default();
+            prefer(models, ANTHROPIC_DEFAULT_MODEL).into_iter().take(20).map(|m| backend("anthropic", &m, format!("Anthropic: {m}"), true)).collect()
+        });
+        let openai = scope.spawn(|| {
+            if s.openai_key.is_empty() {
+                return Vec::new();
+            }
+            let auth = format!("Bearer {}", s.openai_key);
+            let mut models: Vec<String> = list_models(OPENAI, &[("Authorization", &auth)])
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|m| (m.starts_with("gpt-") || m.starts_with("o") || m.starts_with("chatgpt")) && !m.contains("audio") && !m.contains("realtime") && !m.contains("image") && !m.contains("tts") && !m.contains("transcribe"))
+                .collect();
+            models.sort_by(|a, b| b.cmp(a));
+            prefer(models, OPENAI_DEFAULT_MODEL).into_iter().take(25).map(|m| backend("openai", &m, format!("OpenAI: {m}"), true)).collect()
+        });
+        let mut out = ollama.join().unwrap_or_default();
+        out.extend(agenticwork.join().unwrap_or_default());
+        out.extend(anthropic.join().unwrap_or_default());
+        out.extend(openai.join().unwrap_or_default());
+        out
+    })
 }
 
 /// Stream the reply, calling `on_chunk` with each piece of text. Stops early
-/// when `stop` is set.
-pub fn stream(messages: &[Message], backend: &Backend, stop: &AtomicBool, on_chunk: &mut dyn FnMut(&str)) -> Result<(), String> {
+/// when `stop` is set. Keys come from `settings`, never from the UI.
+pub fn stream(settings: &Settings, messages: &[Message], backend: &Backend, stop: &AtomicBool, on_chunk: &mut dyn FnMut(&str)) -> Result<(), String> {
     match backend.kind.as_str() {
-        "ollama" => stream_ollama(OLLAMA, messages, &backend.model, stop, on_chunk),
-        "agenticode" => stream_agenticode(messages, stop, on_chunk),
-        other => Err(format!("unknown backend {other}")),
+        "ollama" => stream_ollama(&settings.ollama_host, messages, &backend.model, stop, on_chunk),
+        "anthropic" => stream_anthropic(ANTHROPIC, &settings.anthropic_key, messages, &backend.model, stop, on_chunk),
+        "openai" => stream_openai("OpenAI", OPENAI, &settings.openai_key, messages, &backend.model, stop, on_chunk),
+        "agenticwork" => stream_openai("AgenticWork", &settings.agenticwork_url, &settings.agenticwork_key, messages, &backend.model, stop, on_chunk),
+        other => Err(format!("unknown provider {other}")),
     }
 }
 
@@ -163,10 +244,7 @@ pub fn stream_ollama(base: &str, messages: &[Message], model: &str, stop: &Atomi
         "options": { "temperature": 0.3, "num_ctx": 12288, "num_predict": 1800 },
         "messages": messages.iter().map(|m| serde_json::json!({ "role": m.role, "content": m.text })).collect::<Vec<_>>(),
     });
-    let resp = agent(600).post(&format!("{base}/api/chat")).send_json(body).map_err(|e| match e {
-        ureq::Error::Status(code, r) => format!("Ollama returned HTTP {code}: {}", r.into_string().unwrap_or_default().chars().take(300).collect::<String>()),
-        other => format!("Could not reach Ollama: {other}"),
-    })?;
+    let resp = agent(600).post(&format!("{base}/api/chat")).send_json(body).map_err(|e| http_error("Ollama", e))?;
     for line in BufReader::new(resp.into_reader()).lines() {
         if stop.load(Ordering::SeqCst) {
             break;
@@ -188,45 +266,82 @@ pub fn stream_ollama(base: &str, messages: &[Message], model: &str, stop: &Atomi
     Ok(())
 }
 
-/// agenticode is an agent CLI. It is run in print mode with every tool
-/// disallowed, so it can only answer in text.
-fn stream_agenticode(messages: &[Message], stop: &AtomicBool, on_chunk: &mut dyn FnMut(&str)) -> Result<(), String> {
-    let cli = agenticode_cli().ok_or("The agenticode CLI could not be launched.")?;
-    let prompt = messages
-        .iter()
-        .map(|m| match m.role.as_str() {
-            "system" => m.text.clone(),
-            "user" => format!("USER:\n{}", m.text),
-            _ => format!("ASSISTANT:\n{}", m.text),
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let mut child = Command::new(cli)
-        .args(["-p", &prompt, "--allowedTools", ""])
-        .current_dir(std::env::temp_dir())
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let mut out = child.stdout.take().ok_or("no output from agenticode")?;
-    let mut buf = [0u8; 2048];
-    loop {
+/// Call `on_event` with the JSON of each `data:` line of a server-sent event
+/// stream. Return `Ok(false)` from it to stop reading.
+fn read_sse(reader: impl std::io::Read, stop: &AtomicBool, mut on_event: impl FnMut(serde_json::Value) -> Result<bool, String>) -> Result<(), String> {
+    for line in BufReader::new(reader).lines() {
         if stop.load(Ordering::SeqCst) {
-            let _ = child.kill();
             break;
         }
-        match out.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => on_chunk(&String::from_utf8_lossy(&buf[..n])),
+        let line = line.map_err(|e| e.to_string())?;
+        let Some(data) = line.strip_prefix("data:") else { continue };
+        let data = data.trim();
+        if data == "[DONE]" {
+            break;
+        }
+        let Ok(obj) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+        if !on_event(obj)? {
+            break;
         }
     }
-    let status = child.wait().map_err(|e| e.to_string())?;
-    if status.success() || stop.load(Ordering::SeqCst) {
-        Ok(())
-    } else {
-        Err(format!("agenticode exited with {status}"))
-    }
+    Ok(())
+}
+
+/// Anthropic Messages API, streamed. The system prompt is a top-level field.
+pub fn stream_anthropic(base: &str, key: &str, messages: &[Message], model: &str, stop: &AtomicBool, on_chunk: &mut dyn FnMut(&str)) -> Result<(), String> {
+    let system = messages.iter().filter(|m| m.role == "system").map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 16000,
+        "stream": true,
+        "system": system,
+        "messages": messages.iter().filter(|m| m.role != "system").map(|m| serde_json::json!({ "role": m.role, "content": m.text })).collect::<Vec<_>>(),
+    });
+    let resp = agent(600)
+        .post(&format!("{base}/v1/messages"))
+        .set("x-api-key", key)
+        .set("anthropic-version", "2023-06-01")
+        .send_json(body)
+        .map_err(|e| http_error("Anthropic", e))?;
+    read_sse(resp.into_reader(), stop, |ev| match ev["type"].as_str() {
+        Some("content_block_delta") => {
+            if ev["delta"]["type"] == "text_delta" {
+                if let Some(text) = ev["delta"]["text"].as_str() {
+                    on_chunk(text);
+                }
+            }
+            Ok(true)
+        }
+        Some("message_delta") if ev["delta"]["stop_reason"] == "refusal" => Err("The model declined to answer this request.".into()),
+        Some("error") => Err(format!("Anthropic: {}", ev["error"]["message"].as_str().unwrap_or("stream error"))),
+        Some("message_stop") => Ok(false),
+        _ => Ok(true),
+    })
+}
+
+/// OpenAI-style chat completions, streamed. AgenticWork speaks the same protocol.
+pub fn stream_openai(who: &str, base: &str, key: &str, messages: &[Message], model: &str, stop: &AtomicBool, on_chunk: &mut dyn FnMut(&str)) -> Result<(), String> {
+    let body = serde_json::json!({
+        "model": model,
+        "stream": true,
+        "messages": messages.iter().map(|m| serde_json::json!({ "role": m.role, "content": m.text })).collect::<Vec<_>>(),
+    });
+    let resp = agent(600)
+        .post(&format!("{base}/v1/chat/completions"))
+        .set("Authorization", &format!("Bearer {key}"))
+        .send_json(body)
+        .map_err(|e| http_error(who, e))?;
+    read_sse(resp.into_reader(), stop, |ev| {
+        if let Some(err) = ev["error"]["message"].as_str().or(ev["error"].as_str()) {
+            return Err(format!("{who}: {err}"));
+        }
+        if let Some(text) = ev["choices"][0]["delta"]["content"].as_str() {
+            if !text.is_empty() {
+                on_chunk(text);
+            }
+        }
+        Ok(true)
+    })
 }
 
 /// One advisor conversation, filled in by a background thread and read by polling.
@@ -246,7 +361,7 @@ pub struct Advisor {
 impl Advisor {
     /// Start (or continue) the conversation. `facts` builds the opening user
     /// message and is only called for the first question.
-    pub fn ask(&self, backend: Backend, follow_up: Option<String>, facts: impl FnOnce() -> String + Send + 'static) -> Result<(), String> {
+    pub fn ask(&self, settings: Settings, backend: Backend, follow_up: Option<String>, facts: impl FnOnce() -> String + Send + 'static) -> Result<(), String> {
         {
             let mut s = self.session.lock().unwrap();
             if s.running {
@@ -275,7 +390,7 @@ impl Advisor {
                 s.messages.push(Message { role: "assistant".into(), text: String::new() });
                 history
             };
-            let result = stream(&history, &backend, &stop, &mut |chunk| {
+            let result = stream(&settings, &history, &backend, &stop, &mut |chunk| {
                 if let Some(last) = session.lock().unwrap().messages.last_mut() {
                     last.text.push_str(chunk);
                 }

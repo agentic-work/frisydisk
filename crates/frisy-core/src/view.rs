@@ -194,7 +194,7 @@ pub fn category(name: &str) -> &'static str {
         | "sh" | "json" | "yaml" | "yml" | "html" | "css" | "map" | "cs" | "ps1" => "Code",
         "dylib" | "so" | "a" | "o" | "node" | "wasm" | "exe" | "dll" | "jar" | "lib" | "pdb" | "rlib" | "rmeta" => "Binaries",
         "db" | "sqlite" | "sqlite3" | "sqlite-wal" | "mdb" | "ldb" | "realm" => "Databases",
-        "gguf" | "safetensors" | "bin" | "pt" | "pth" | "onnx" | "mlmodel" | "ckpt" => "ML models",
+        "gguf" | "safetensors" | "pt" | "pth" | "onnx" | "mlmodel" | "ckpt" => "ML models",
         "log" | "cache" | "tmp" | "pack" | "idx" | "etl" | "dmp" => "Logs and caches",
         _ => "Other",
     }

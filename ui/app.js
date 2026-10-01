@@ -516,16 +516,90 @@ $("collector-trash").onclick = () => {
 
 let advisorTimer;
 
-async function loadBackends() {
-  if (state.backends) return;
+/** Find what the advisor can talk to. With nothing usable, the Advisor tab stays hidden. */
+async function refreshBackends() {
   try {
-    state.backends = await call("backends");
-    state.backend = state.backends[0] || null;
+    const found = await call("backends");
+    const keep = state.backend && found.find((b) => b.kind === state.backend.kind && b.model === state.backend.model);
+    state.backends = found;
+    state.backend = keep || found[0] || null;
   } catch (e) {
     state.backends = [];
-    fail(e);
+    state.backend = null;
   }
-  renderAdvisor();
+  const tab = $("tabs").querySelector('[data-tab="advisor"]');
+  tab.hidden = state.backends.length === 0;
+  if (tab.hidden && state.tab === "advisor") setTab("contents");
+  else if (state.tab === "advisor") renderAdvisor();
+  return state.backends;
+}
+
+async function openSettings() {
+  let cfg;
+  try {
+    cfg = await call("settings");
+  } catch (e) {
+    return fail(e);
+  }
+  const saved = (has) => (has ? "Saved. Leave blank to keep it, or type a new one." : "Not set");
+  const card = openModal(`<h2>Advisor settings</h2>
+    <p>The advisor needs a model to talk to. It appears only when one of these is available.</p>
+    <label class="check"><input type="checkbox" id="set-enabled" ${cfg.advisor_enabled ? "checked" : ""}> Use the advisor</label>
+    <div class="field"><label for="set-ollama">Ollama address</label>
+      <input type="text" id="set-ollama" value="${escapeHtml(cfg.ollama_host)}" spellcheck="false">
+      <small>Runs on this computer by default. Point it at another machine to use an Ollama server on your network.</small></div>
+    <div class="field"><label>AgenticWork</label>
+      <div class="field-pair"><input type="text" id="set-aw-url" value="${escapeHtml(cfg.agenticwork_url)}" placeholder="https://your-agenticwork-host" spellcheck="false">
+      <input type="password" id="set-aw-key" placeholder="API key" autocomplete="off"></div>
+      <small>${saved(cfg.has_agenticwork_key)}${cfg.has_agenticwork_key ? ` <a href="#" data-clear="agenticwork_key">Remove key</a>` : ""}</small></div>
+    <div class="field"><label for="set-anthropic">Anthropic API key</label>
+      <input type="password" id="set-anthropic" placeholder="sk-ant-…" autocomplete="off">
+      <small>${saved(cfg.has_anthropic_key)}${cfg.has_anthropic_key ? ` <a href="#" data-clear="anthropic_key">Remove key</a>` : ""}</small></div>
+    <div class="field"><label for="set-openai">OpenAI API key</label>
+      <input type="password" id="set-openai" placeholder="sk-…" autocomplete="off">
+      <small>${saved(cfg.has_openai_key)}${cfg.has_openai_key ? ` <a href="#" data-clear="openai_key">Remove key</a>` : ""}</small></div>
+    <p class="note">With AgenticWork, Anthropic, OpenAI or an Ollama server on another machine, the scan summary (folder and file names with sizes) is sent to that service when you ask for suggestions. Keys are stored on this computer in ${escapeHtml(cfg.file)}.</p>
+    <div class="found" id="set-found"></div>
+    <div class="modal-actions"><button id="set-cancel">Close</button><button class="primary" id="set-save">Save and check</button></div>`);
+  const found = card.querySelector("#set-found");
+  const describe = (list) => {
+    if (!card.querySelector("#set-enabled").checked) return "The advisor is off.";
+    if (!list.length) return "Nothing to talk to yet, so the Advisor tab stays hidden.";
+    const by = {};
+    for (const b of list) by[b.kind] = (by[b.kind] || 0) + 1;
+    const names = { ollama: "Ollama", agenticwork: "AgenticWork", anthropic: "Anthropic", openai: "OpenAI" };
+    return "Ready: " + Object.entries(by).map(([k, n]) => `${names[k] || k} (${plural(n, "model")})`).join(", ");
+  };
+  found.textContent = state.backends ? describe(state.backends) : "";
+  const clear = {};
+  for (const a of card.querySelectorAll("a[data-clear]"))
+    a.onclick = (ev) => {
+      ev.preventDefault();
+      clear[a.dataset.clear] = "";
+      a.parentElement.textContent = "Will be removed when you save.";
+    };
+  card.querySelector("#set-cancel").onclick = closeModal;
+  card.querySelector("#set-save").onclick = async () => {
+    const change = {
+      advisor_enabled: card.querySelector("#set-enabled").checked,
+      ollama_host: card.querySelector("#set-ollama").value,
+      agenticwork_url: card.querySelector("#set-aw-url").value,
+      ...clear,
+    };
+    // A blank key field means "keep what is saved".
+    for (const [field, id] of [["agenticwork_key", "set-aw-key"], ["anthropic_key", "set-anthropic"], ["openai_key", "set-openai"]]) {
+      const v = card.querySelector("#" + id).value.trim();
+      if (v) change[field] = v;
+    }
+    found.textContent = "Checking…";
+    try {
+      await call("set_settings", change);
+      found.textContent = describe(await refreshBackends());
+      for (const id of ["set-aw-key", "set-anthropic", "set-openai"]) card.querySelector("#" + id).value = "";
+    } catch (e) {
+      found.textContent = e.message;
+    }
+  };
 }
 
 function renderAdvisor() {
@@ -534,7 +608,7 @@ function renderAdvisor() {
   if (state.backends) {
     sel.innerHTML = state.backends.length
       ? state.backends.map((b, i) => `<option value="${i}">${escapeHtml(b.label)}</option>`).join("")
-      : `<option>No local model found</option>`;
+      : `<option>No model available</option>`;
     if (state.backend) sel.value = String(state.backends.indexOf(state.backend));
   } else {
     sel.innerHTML = `<option>Looking for local models…</option>`;
@@ -547,15 +621,18 @@ function renderAdvisor() {
 
   const body = $("advisor-body");
   if (!a.started && !a.error) {
-    const none = state.backends && !state.backends.length;
+    const b = state.backend;
+    const where = !b
+      ? ""
+      : b.remote
+        ? `<li><strong>This leaves your computer.</strong> Folder and file names with their sizes are sent to ${escapeHtml(b.label.split(":")[0])}.</li>`
+        : `<li>The model runs on this computer. Nothing is sent anywhere else.</li>`;
     body.innerHTML = `<div class="advisor-intro"><h2>Storage advisor</h2>
-      <p>Sends this scan and a summary of your volumes, network shares and system disk to a model running on this computer, and asks for ways to speed up I/O and make better use of the storage you already have.</p>
-      <ul><li>Suggestions only. Nothing is moved, changed or deleted.</li>
-      <li>Ollama models run on this computer. agenticode may use the provider it is set up with.</li></ul>
-      <p><button class="primary" id="advisor-ask" ${state.scanning || none || !state.backends ? "disabled" : ""}>${
+      <p>Sends this scan and a summary of your volumes, network shares and system disk to the model you pick above, and asks for ways to speed up I/O and make better use of the storage you already have.</p>
+      <ul><li>Suggestions only. Nothing is moved, changed or deleted.</li>${where}</ul>
+      <p><button class="primary" id="advisor-ask" ${state.scanning || !b ? "disabled" : ""}>${
         state.scanning ? "Ready when the scan finishes" : "Ask for suggestions"
-      }</button></p>
-      ${none ? `<p class="note">Start Ollama with a chat model pulled (for example <code>ollama pull gemma3</code>), then reopen this tab.</p>` : ""}</div>`;
+      }</button></p></div>`;
     const ask = $("advisor-ask");
     if (ask) ask.onclick = () => askAdvisor(null);
     return;
@@ -569,7 +646,7 @@ function renderAdvisor() {
     html += `<div class="risky"><strong>The model ignored the non-destructive rule in ${plural(a.risky.length, "line")}. Skip these:</strong>${a.risky
       .map((l) => `<code>${escapeHtml(l)}</code>`)
       .join("")}</div>`;
-  if (!a.running && a.messages.length) html += `<p class="note">Written by a local model. FrisyDisk ran none of this. Read each command before you run it.</p>`;
+  if (!a.running && a.messages.length) html += `<p class="note">Written by a model. FrisyDisk ran none of this. Read each command before you run it.</p>`;
   body.innerHTML = html;
   if (pinned && a.running) body.scrollTop = body.scrollHeight;
 }
@@ -598,7 +675,12 @@ async function pollAdvisor() {
   else window.dispatchEvent(new Event("frisy-advisor-done"));
 }
 
-$("backend").onchange = (ev) => (state.backend = state.backends[Number(ev.target.value)] || null);
+$("backend").onchange = (ev) => {
+  state.backend = state.backends[Number(ev.target.value)] || null;
+  renderAdvisor();
+};
+$("settings-start").onclick = openSettings;
+$("settings-top").onclick = openSettings;
 $("advisor-stop").onclick = () => call("advisor_stop").catch(fail);
 $("advisor-reset").onclick = async () => {
   await call("advisor_reset").catch(fail);
@@ -618,7 +700,6 @@ $("advisor-form").onsubmit = (ev) => {
 function setTab(tab) {
   state.tab = tab;
   select("tabs", "tab", tab);
-  if (tab === "advisor") loadBackends();
   renderList();
 }
 
@@ -718,15 +799,17 @@ async function init() {
       if (ev.payload.type === "drop" && ev.payload.paths?.length) startScan(ev.payload.paths[0]);
     });
   }
+  const ready = refreshBackends();
   if (["sunburst", "treemap", "sankey"].includes(opts.mode)) state.mode = opts.mode;
-  if (["contents", "largest", "types", "advisor"].includes(opts.tab)) state.tab = opts.tab;
+  if (["contents", "largest", "types"].includes(opts.tab)) state.tab = opts.tab;
+  if (opts.tab === "advisor" && (await ready).length) state.tab = "advisor";
   if (opts.scan) {
     if ("advise" in opts) {
       window.addEventListener(
         "frisy-scan-done",
         async () => {
+          if (!(state.backends || (await refreshBackends())).length) return;
           setTab("advisor");
-          await loadBackends();
           askAdvisor(null);
         },
         { once: true },

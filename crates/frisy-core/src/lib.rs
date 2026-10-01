@@ -4,5 +4,6 @@ pub mod advisor;
 pub mod api;
 pub mod facts;
 pub mod scan;
+pub mod settings;
 pub mod tree;
 pub mod view;

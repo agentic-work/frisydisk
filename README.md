@@ -13,10 +13,27 @@ interface, packaged with Tauri.
 - Collector: stage items, review them, then move them to the Trash (Recycle Bin
   on Windows) after a confirmation. Nothing is deleted permanently.
 - Advisor: sends the scan and a summary of your volumes, including NAS shares,
-  to a model running on your own computer and asks for non-destructive ways to
-  improve I/O and use existing storage better. It only produces text, and any
-  command in an answer that would delete data is flagged. Uses Ollama at
-  `127.0.0.1:11434`, or the `agenticode` CLI when it is installed.
+  to a model and asks for non-destructive ways to improve I/O and use existing
+  storage better. It only produces text, and any command in an answer that
+  would delete data is flagged.
+
+### Advisor providers
+
+The Advisor tab appears only when there is a model to talk to. Under
+**Settings** you can use any of:
+
+| Provider | What to set | Where your scan summary goes |
+| --- | --- | --- |
+| Ollama on this computer | nothing, it is detected at `127.0.0.1:11434` | nowhere, it stays local |
+| Ollama on another machine | its address | that machine |
+| AgenticWork | base URL and API key | your AgenticWork deployment |
+| Anthropic | API key | Anthropic |
+| OpenAI | API key | OpenAI |
+
+With nothing configured and no local Ollama, the tab stays hidden. You can also
+turn the advisor off. Keys are stored in `settings.json` in your user config
+folder (readable only by you on macOS and Linux) and are never sent to the
+interface.
 
 ## Build
 
@@ -45,7 +62,8 @@ npx tauri build     # build an installer for this platform
 ```sh
 cargo run --release --bin frisyscan -- ~/Projects --top 20   # totals and largest children
 cargo run --release --bin frisyscan -- --facts               # what the advisor is told about this machine
-cargo run --release --bin frisyscan -- ~ --advise            # scan, then ask the first local model
+cargo run --release --bin frisyscan -- ~ --advise            # scan, then ask the first available model
+cargo run --release --bin frisyscan -- ~ --advise anthropic  # or name a provider or a model
 cargo run --release --bin frisyscan -- serve                 # the UI in a browser at http://127.0.0.1:7878
 ```
 

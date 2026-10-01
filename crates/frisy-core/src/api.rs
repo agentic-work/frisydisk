@@ -5,17 +5,24 @@
 use crate::advisor::{self, Advisor, Backend};
 use crate::facts;
 use crate::scan::Scan;
+use crate::settings::Settings;
 use crate::tree::{NodeId, Tree, FLAG_DETACHED};
 use crate::view;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
 pub struct Api {
     scan: Mutex<Option<Arc<Scan>>>,
     /// Nodes staged in the collector, in the order they were added.
     collector: Mutex<Vec<NodeId>>,
     advisor: Advisor,
+    settings: Mutex<Settings>,
+}
+
+impl Default for Api {
+    fn default() -> Api {
+        Api { scan: Mutex::new(None), collector: Mutex::new(Vec::new()), advisor: Advisor::default(), settings: Mutex::new(Settings::load()) }
+    }
 }
 
 fn id_arg(args: &Value, key: &str) -> Result<NodeId, String> {
@@ -215,13 +222,27 @@ impl Api {
             }
 
             // Advisor
-            "backends" => Ok(to_json(&advisor::backends())),
+            "backends" => {
+                let settings = self.settings.lock().unwrap().clone();
+                Ok(to_json(&advisor::backends(&settings)))
+            }
+            "settings" => Ok(self.settings.lock().unwrap().public()),
+            "set_settings" => {
+                let mut settings = self.settings.lock().unwrap();
+                settings.apply(args);
+                settings.save()?;
+                Ok(settings.public())
+            }
             "advisor_ask" => {
                 let backend: Backend = serde_json::from_value(args["backend"].clone()).map_err(|_| "Pick a model first.")?;
                 let follow_up = args["follow_up"].as_str().map(String::from);
                 let scan = self.scan.lock().unwrap().clone();
                 let focus = args["focus"].as_u64().unwrap_or(0) as NodeId;
-                self.advisor.ask(backend, follow_up, move || {
+                let settings = self.settings.lock().unwrap().clone();
+                if !settings.advisor_enabled {
+                    return Err("The advisor is turned off in settings.".into());
+                }
+                self.advisor.ask(settings, backend, follow_up, move || {
                     let machine = facts::machine_report();
                     let report = scan.filter(|s| s.is_finished()).and_then(|s| {
                         let tree = s.tree.lock().unwrap();

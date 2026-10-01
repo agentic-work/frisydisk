@@ -27,6 +27,7 @@
       <input id="path-input" type="text" spellcheck="false" autocomplete="off" placeholder="or paste a folder path" aria-label="Folder path">
       <button type="submit" class="primary">Scan</button>
     </form>
+    <p class="start-foot"><button type="button" id="settings-start">Advisor settings…</button></p>
   </div>
 </main>
 
@@ -41,6 +42,7 @@
       <button data-mode="sankey" role="tab">Sankey</button>
     </div>
     <button id="rescan" title="Scan again">Rescan</button>
+    <button id="settings-top" title="Advisor settings">Settings</button>
   </nav>
 
   <div class="workspace">
@@ -63,7 +65,7 @@
         <button data-tab="contents" role="tab">Contents</button>
         <button data-tab="largest" role="tab">Largest</button>
         <button data-tab="types" role="tab">Types</button>
-        <button data-tab="advisor" role="tab">Advisor</button>
+        <button data-tab="advisor" role="tab" hidden>Advisor</button>
       </div>
       <div class="search" id="search-wrap">
         <input id="search" type="search" placeholder="Search in this folder" spellcheck="false" autocomplete="off">

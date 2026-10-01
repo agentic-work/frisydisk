@@ -175,6 +175,16 @@ input[type="text"], input[type="search"], select {
 }
 
 .path-form input { flex: 1; }
+.start-foot { margin: 18px 0 0; }
+.start-foot button { background: none; border: none; padding: 0; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+
+.field { display: grid; gap: 4px; margin: 12px 0; }
+.field label { font-weight: 600; font-size: 13px; }
+.field small { color: var(--dim); }
+.field input[type="text"], .field input[type="password"] { width: 100%; background: var(--stage); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.found { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; color: var(--dim); font-size: 13px; }
 
 /* ---- Scan screen ---- */
 
@@ -487,3 +497,4 @@ input[type="text"], input[type="search"], select {
   .volume-free { display: none; }
   .path-form { flex-wrap: wrap; }
 }
+.field a, .note a { color: var(--focus); }

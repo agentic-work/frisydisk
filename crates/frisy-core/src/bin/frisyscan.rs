@@ -2,7 +2,8 @@
 //! frisyscan --facts                             the machine report the advisor sees
 //! frisyscan serve [--port N] [--ui DIR]         serve the UI and API on 127.0.0.1 for development
 
-use frisy_core::advisor::{self, Backend, Message};
+use frisy_core::advisor::{self, Message};
+use frisy_core::settings::Settings;
 use frisy_core::api::Api;
 use frisy_core::view::{bytes, count};
 use frisy_core::{facts, scan::Scan};
@@ -55,15 +56,12 @@ fn main() {
     }
 
     if let Some(model) = advise {
-        let backend = if model == "agenticode" {
-            Some(Backend { kind: "agenticode".into(), model: String::new(), label: "agenticode".into() })
-        } else if !model.is_empty() {
-            Some(Backend { kind: "ollama".into(), label: format!("Ollama: {model}"), model })
-        } else {
-            advisor::backends().into_iter().next()
-        };
+        // MODEL may be a model name or a provider: ollama, agenticwork, anthropic, openai.
+        let settings = Settings::load();
+        let all = advisor::backends(&settings);
+        let backend = if model.is_empty() { all.into_iter().next() } else { all.into_iter().find(|b| b.model == model || b.kind == model) };
         let Some(backend) = backend else {
-            eprintln!("no local model found: start Ollama with a chat model pulled");
+            eprintln!("no usable model: start Ollama, or add a provider key in the app's settings");
             std::process::exit(1);
         };
         println!("\n--- advisor ({}) ---", backend.label);
@@ -72,7 +70,7 @@ fn main() {
             Message { role: "user".into(), text: advisor::user_prompt(&facts::machine_report(), Some(&facts::scan_report(&tree, 0))) },
         ];
         let mut answer = String::new();
-        let result = advisor::stream(&messages, &backend, &AtomicBool::new(false), &mut |chunk| {
+        let result = advisor::stream(&settings, &messages, &backend, &AtomicBool::new(false), &mut |chunk| {
             answer.push_str(chunk);
             print!("{chunk}");
             let _ = std::io::stdout().flush();
@@ -98,8 +96,21 @@ fn serve(port: u16, ui: &str) {
     let server = tiny_http::Server::http(("127.0.0.1", port)).expect("could not bind port");
     let api = Api::new();
     println!("FrisyDisk dev server on http://127.0.0.1:{port} (UI from {ui})");
+    let allowed_hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    let ui_root = std::fs::canonicalize(ui).expect("UI folder not found");
     for mut request in server.incoming_requests() {
         let url = request.url().split('?').next().unwrap_or("/").to_string();
+        // Only this machine's own pages may talk to the server: refuse requests
+        // addressed to another host name (DNS rebinding) or sent by another site.
+        let header = |name: &str| {
+            request.headers().iter().find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name)).map(|h| h.value.as_str().to_string())
+        };
+        let host_ok = header("Host").is_some_and(|h| allowed_hosts.contains(&h));
+        let origin_ok = header("Origin").map_or(true, |o| allowed_hosts.iter().any(|h| o == format!("http://{h}")));
+        if !host_ok || !origin_ok {
+            let _ = request.respond(tiny_http::Response::from_string("forbidden").with_status_code(403));
+            continue;
+        }
         if let Some(cmd) = url.strip_prefix("/api/") {
             let mut body = String::new();
             let _ = std::io::Read::read_to_string(request.as_reader(), &mut body);
@@ -113,11 +124,13 @@ fn serve(port: u16, ui: &str) {
             continue;
         }
         let rel = if url == "/" { "index.html" } else { url.trim_start_matches('/') };
-        let file = std::path::Path::new(ui).join(rel);
-        if rel.contains("..") || !file.is_file() {
+        // Plain relative names only, and the resolved file must sit inside the UI folder.
+        let plain = std::path::Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+        let file = plain.then(|| ui_root.join(rel)).and_then(|f| std::fs::canonicalize(f).ok()).filter(|f| f.starts_with(&ui_root) && f.is_file());
+        let Some(file) = file else {
             let _ = request.respond(tiny_http::Response::from_string("not found").with_status_code(404));
             continue;
-        }
+        };
         let mime = match file.extension().and_then(|e| e.to_str()) {
             Some("html") => "text/html; charset=utf-8",
             Some("js") => "text/javascript; charset=utf-8",
