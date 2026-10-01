@@ -43,7 +43,11 @@ public enum Advisor {
     - Suggest NON-DESTRUCTIVE improvements only. Never recommend deleting, erasing, reformatting or \
     overwriting data. Prefer moving, archiving to the NAS, relocating caches or model stores, symlinks, \
     compression, deduplication by cloning, mount and SMB tuning, snapshot and backup settings, and scheduling.
+    - No step may contain rm, "delete", "clear", "purge", "empty" or "erase" as an action, not even for caches, \
+    logs or build output. If something looks disposable, suggest moving it to the NAS instead, where it can be \
+    brought back.
     - Every suggestion must be reversible, and you must say how to undo it.
+    - Copy first, verify the copy, and only then switch over (for example with a symlink). Say so in the steps.
     - Ground every suggestion in the facts given. Name the actual folders, shares and sizes. \
     If a fact you need is missing, say what to check instead of guessing.
     - You cannot run anything. Show commands for the person to review and run themselves.
@@ -120,7 +124,7 @@ public enum Advisor {
                         "model": model,
                         "stream": true,
                         "think": false,
-                        "options": ["temperature": 0.3, "num_ctx": 16384],
+                        "options": ["temperature": 0.3, "num_ctx": 12288, "num_predict": 1800],
                         "messages": messages.map { ["role": $0.role.rawValue, "content": $0.text] },
                     ] as [String: Any])
                     let (bytes, response) = try await URLSession.shared.bytes(for: req)

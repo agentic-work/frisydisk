@@ -5,6 +5,8 @@ public struct ScanProgress: Sendable, Equatable {
     public var directories = 0
     public var bytes: Int64 = 0
     public var inaccessible = 0
+
+    public init() {}
 }
 
 /// Parallel directory scanner built on `getattrlistbulk`.

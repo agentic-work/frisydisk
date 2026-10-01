@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>FrisyDisk</string>
+    <key>CFBundleDisplayName</key><string>FrisyDisk</string>
+    <key>CFBundleIdentifier</key><string>work.agentic.frisydisk</string>
+    <key>CFBundleExecutable</key><string>FrisyDisk</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>NSDesktopFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Desktop folder.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Documents folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>FrisyDisk measures the size of files in your Downloads folder.</string>
+    <key>NSNetworkVolumesUsageDescription</key><string>FrisyDisk measures the size of files on network volumes you choose to scan.</string>
+    <key>NSRemovableVolumesUsageDescription</key><string>FrisyDisk measures the size of files on removable volumes you choose to scan.</string>
+</dict>
+</plist>
