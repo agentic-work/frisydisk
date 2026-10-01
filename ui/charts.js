@@ -336,7 +336,9 @@ export class Chart {
         ctx.globalAlpha = dim ? 0.4 : 1;
         ctx.font = `600 11.5px ${FONT}`;
         ctx.fillStyle = th.text;
-        const room = (n.leaf ? this.w - x - n.w - 16 : this.flow.nodes.find((m) => m.level === n.level + 1)?.x + ox - x - n.w - 30) || 120;
+        // Labels may run up to the next column; only the last column gets the rest of the width.
+        const next = nodes.find((m) => m.level === n.level + 1);
+        const room = next ? ox + next.x - x - n.w - 18 : this.w - x - n.w - 16;
         const name = fit(ctx, n.node.name, Math.max(40, room));
         const two = n.h >= 27;
         ctx.fillText(name, x + n.w + 7, y + n.h / 2 - (two ? 7 : 0));

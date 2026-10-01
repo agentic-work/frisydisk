@@ -1,7 +1,18 @@
 # FrisyDisk
 
+[![CI](https://github.com/agentic-work/frisydisk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/agentic-work/frisydisk/actions/workflows/ci.yml)
+[![Release](https://github.com/agentic-work/frisydisk/actions/workflows/release.yml/badge.svg)](https://github.com/agentic-work/frisydisk/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/agentic-work/frisydisk)](https://github.com/agentic-work/frisydisk/releases/latest)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+
 See what is using your disks, on macOS and Windows. One Rust scanner, one web
 interface, packaged with Tauri.
+
+![Sunburst view of a folder](docs/screenshots/sunburst.png)
+
+| Treemap | Sankey (largest folders only) | File types |
+| --- | --- | --- |
+| ![Treemap view](docs/screenshots/treemap.png) | ![Sankey view](docs/screenshots/sankey.png) | ![File type breakdown](docs/screenshots/types.png) |
 
 ## What it does
 
@@ -121,6 +132,11 @@ notarised DMG. The header of the script lists the credentials it expects.
 - A whole-disk total is lower than the system's "used" figure: snapshots, swap
   and folders the app cannot read are not in it. On macOS, grant Full Disk
   Access to see protected folders.
+
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Licence
 
