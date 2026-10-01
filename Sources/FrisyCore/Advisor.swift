@@ -64,6 +64,17 @@ public enum Advisor {
         return s
     }
 
+    /// Lines of a model answer that would delete or overwrite data if run.
+    /// Models do not always follow the non-destructive rule, so the app checks.
+    public static func destructiveLines(in answer: String) -> [String] {
+        let patterns = [#"(^|[\s;&|])(sudo\s+)?rm\s"#, #"\bdiskutil\s+(erase|reformat|apfs\s+delete)"#, #"\bnewfs|\bmkfs"#,
+                        #"\bdd\s+.*\bof="#, #"\btmutil\s+delete"#, #"\bfind\b.*-delete\b"#, #"rsync\b.*--(delete|remove-source-files)"#,
+                        #"\bmv\s+.*\s~?/?\.Trash"#, #"\bshred\b|\bsrm\b"#]
+        return answer.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { line in
+            !line.isEmpty && patterns.contains { line.range(of: $0, options: .regularExpression) != nil }
+        }
+    }
+
     // MARK: Backends
 
     public static var ollamaBase = URL(string: "http://127.0.0.1:11434")!

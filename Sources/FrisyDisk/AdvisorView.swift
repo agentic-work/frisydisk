@@ -106,6 +106,22 @@ struct AdvisorView: View {
                             .foregroundStyle(.orange)
                             .font(.callout)
                     }
+                    let risky = model.isAdvising ? [] : replies.filter { $0.role == .assistant }.flatMap { Advisor.destructiveLines(in: $0.text) }
+                    if !risky.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("The model ignored the non-destructive rule in \(risky.count) line\(risky.count == 1 ? "" : "s"). Skip these:",
+                                  systemImage: "exclamationmark.octagon.fill")
+                                .fontWeight(.semibold)
+                            ForEach(Array(risky.enumerated()), id: \.offset) { _, line in
+                                Text(line).font(.system(size: 11.5, design: .monospaced)).lineLimit(2)
+                            }
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.red.opacity(0.12)))
+                    }
                     if !model.isAdvising && !replies.isEmpty {
                         Label("Written by a local model. FrisyDisk ran none of this. Read each command before you run it.",
                               systemImage: "exclamationmark.shield")

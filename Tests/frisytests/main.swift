@@ -256,6 +256,8 @@ struct AnalysisTests {
         expect(Advisor.systemPrompt.contains("Never recommend deleting"))
         let prompt = Advisor.userPrompt(machine: "## Mounted volumes\n- NAS", scan: "## Disk usage scan of /x")
         expect(prompt.contains("- NAS") && prompt.contains("/x"))
+        let answer = "cp -av a /Volumes/nas/\n  rm -rf ~/work/a\nln -s /Volumes/nas/a ~/work/a\nsudo rm /x\nrsync -a --delete a b\nformat the report\nls && rm b"
+        expect(Advisor.destructiveLines(in: answer) == ["rm -rf ~/work/a", "sudo rm /x", "rsync -a --delete a b", "ls && rm b"])
         let tree = ScanTree(root: sampleTree())
         let report = SystemFacts.scanReport(tree: tree, focus: tree.root)
         expect(report.contains("big/: 60 bytes") && report.contains("Video"))

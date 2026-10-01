@@ -65,10 +65,17 @@ if let adviseModel {
                                                           scan: SystemFacts.scanReport(tree: scanner.tree, focus: root))),
     ]
     do {
+        var answer = ""
         for try await chunk in Advisor.stream(messages, backend: backend) {
+            answer += chunk
             FileHandle.standardOutput.write(Data(chunk.utf8))
         }
         print()
+        let risky = Advisor.destructiveLines(in: answer)
+        if !risky.isEmpty {
+            print("\nWARNING: the model ignored the non-destructive rule. Skip these lines:")
+            for line in risky { print("  " + line) }
+        }
     } catch {
         FileHandle.standardError.write(Data("advisor failed: \(error.localizedDescription)\n".utf8))
         exit(1)
