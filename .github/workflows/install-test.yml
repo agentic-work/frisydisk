@@ -1,0 +1,50 @@
+name: Installers
+
+# Install the terminal app the way users do, from the published release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  unix:
+    name: install.sh ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/install.sh
+      - run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          frisy du -c "$GITHUB_WORKSPACE" "$HOME"
+          frisy --print "$GITHUB_WORKSPACE"
+          frisy clean --print
+
+  windows:
+    name: install.ps1 Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        shell: pwsh
+        run: Get-Content -Raw scripts/install.ps1 | Invoke-Expression
+      - name: Run from PowerShell
+        shell: pwsh
+        run: |
+          $env:Path = "$env:Path;$env:LOCALAPPDATA\FrisyDisk\cli"
+          frisy du -c $env:GITHUB_WORKSPACE $env:USERPROFILE
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          frisy --print $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          frisy clean --print
+          $sig = Get-AuthenticodeSignature "$env:LOCALAPPDATA\FrisyDisk\cli\frisyscan.exe"
+          "frisyscan.exe: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { throw "frisyscan.exe is not signed" }
+      - name: Run from Command Prompt
+        shell: cmd
+        run: |
+          set "PATH=%PATH%;%LOCALAPPDATA%\FrisyDisk\cli"
+          frisy du "%GITHUB_WORKSPACE%"
