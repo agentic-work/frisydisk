@@ -5,6 +5,7 @@
 use crate::scan::Scan;
 use crate::tree::{NodeId, Tree, FLAG_DIR};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -52,6 +53,10 @@ pub struct Found {
     pub items: Vec<(PathBuf, u64)>,
     #[serde(skip)]
     pub roots: Vec<PathBuf>,
+    /// Identity of each item when it was measured. An item whose identity has
+    /// changed since (swapped for a link, replaced) is skipped.
+    #[serde(skip)]
+    pub fingerprints: HashMap<PathBuf, Fingerprint>,
     #[serde(skip)]
     pub min_age: Duration,
 }
@@ -179,6 +184,28 @@ pub fn targets(p: &Places, os: &str) -> Vec<Target> {
     t
 }
 
+/// File type plus, on Unix, device and inode.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fingerprint {
+    is_dir: bool,
+    is_link: bool,
+    id: (u64, u64),
+}
+
+fn fingerprint(meta: &std::fs::Metadata) -> Fingerprint {
+    #[cfg(unix)]
+    let id = {
+        use std::os::unix::fs::MetadataExt;
+        (meta.dev(), meta.ino())
+    };
+    #[cfg(not(unix))]
+    let id = (0, 0);
+    Fingerprint { is_dir: meta.is_dir(), is_link: meta.file_type().is_symlink(), id }
+}
+
+/// Time since the item was last modified or created, whichever is later. A file
+/// copied or extracted just now keeps its old modified time but is new, and may
+/// be in use.
 fn age(meta: &std::fs::Metadata) -> Duration {
     let newest = [meta.modified().ok(), Some(meta.created().ok().unwrap_or(SystemTime::UNIX_EPOCH))]
         .into_iter()
@@ -234,6 +261,10 @@ pub fn measure(t: &Target) -> Found {
 }
 
 fn found(t: &Target, items: Vec<(PathBuf, u64)>) -> Found {
+    let fingerprints = items
+        .iter()
+        .filter_map(|(p, _)| std::fs::symlink_metadata(p).ok().map(|m| (p.clone(), fingerprint(&m))))
+        .collect();
     Found {
         id: t.id.clone(),
         label: t.label.clone(),
@@ -247,6 +278,7 @@ fn found(t: &Target, items: Vec<(PathBuf, u64)>) -> Found {
         items,
         roots: t.roots.clone(),
         min_age: t.min_age,
+        fingerprints,
     }
 }
 
@@ -301,7 +333,8 @@ pub fn stale_build_folders(tree: &Tree, stale_days: u64) -> Found {
     found(&t, out)
 }
 
-/// How long since anything at the top of a project changed (ignoring the build folder).
+/// How long since anything at the top of a project was modified (ignoring the
+/// build folder). Modified time only: checkouts and copies reset creation times.
 fn project_age(project: &Path, skip: &Path) -> Duration {
     let mut newest = Duration::MAX;
     if let Ok(listing) = std::fs::read_dir(project) {
@@ -310,7 +343,8 @@ fn project_age(project: &Path, skip: &Path) -> Duration {
                 continue;
             }
             if let Ok(m) = std::fs::symlink_metadata(e.path()) {
-                newest = newest.min(age(&m));
+                let modified = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                newest = newest.min(SystemTime::now().duration_since(modified).unwrap_or(Duration::ZERO));
             }
         }
     }
@@ -339,8 +373,9 @@ pub fn clean(found: &[Found], mode: Mode) -> Report {
                 report.skipped += 1; // already gone
                 continue;
             };
-            // Re-check: it may have been used since it was measured.
-            if !allowed(path, &f.roots, kind) || age(&meta) < f.min_age {
+            // Re-check: it may have been used or replaced since it was measured.
+            let same = f.fingerprints.get(path) == Some(&fingerprint(&meta));
+            if !same || !allowed(path, &f.roots, kind) || age(&meta) < f.min_age {
                 report.skipped += 1;
                 continue;
             }

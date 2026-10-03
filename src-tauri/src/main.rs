@@ -12,18 +12,24 @@ fn api(state: tauri::State<'_, Api>, cmd: String, args: Value) -> Result<Value, 
 }
 
 /// Windows only lets administrators read some system folders. Start a new,
-/// elevated copy of the app on the same folder (Windows asks for consent),
-/// then close this one.
+/// elevated copy of the app (Windows asks for consent) on the folder that is
+/// open now, then close this one. The folder comes from the app's own state,
+/// never from the page.
 #[tauri::command]
-fn relaunch_as_admin(app: tauri::AppHandle, path: String) -> Result<(), String> {
+fn relaunch_as_admin(app: tauri::AppHandle, state: tauri::State<'_, Api>) -> Result<(), String> {
     if !cfg!(windows) {
         return Err("Only needed on Windows.".into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // PowerShell single-quoted strings: the only special character is the quote itself.
     let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
     let mut script = format!("Start-Process -FilePath {} -Verb RunAs", quote(&exe.to_string_lossy()));
-    if !path.is_empty() {
-        script.push_str(&format!(" -ArgumentList {}", quote(&format!("--scan \"{path}\""))));
+    if let Some(root) = state.scan_root() {
+        // A real folder, and nothing that could end the quoted argument early.
+        if !std::path::Path::new(&root).is_dir() || root.contains('"') {
+            return Err("The open folder cannot be reopened.".into());
+        }
+        script.push_str(&format!(" -ArgumentList {}, {}", quote("--scan"), quote(&format!("\"{root}\""))));
     }
     let status = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])

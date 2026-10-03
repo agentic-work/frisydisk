@@ -26,69 +26,76 @@ fn target(home: &Path, id: &str) -> clean::Target {
 }
 
 #[test]
-fn temp_files_in_use_are_left_alone() {
+fn recently_used_files_are_left_alone() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path();
+    write(&h.join("tmp/a.log"), 50_000);
+    write(&h.join("tmp/b.log"), 50_000);
+    // Both were just written, so the day-old rule leaves them alone.
+    let t = target(h, "temp");
+    assert_eq!(clean::measure(&t).count, 0);
+    // Even with an old modified time: the files were created just now.
+    make_old(&h.join("tmp/a.log"), 30);
+    if !cfg!(target_os = "macos") {
+        // (macOS moves the creation time back with the modified time.)
+        assert_eq!(clean::measure(&t).count, 0);
+    }
+}
+
+/// A target with no age limit, so tests do not depend on file timestamps.
+fn any_age(home: &Path, id: &str) -> clean::Target {
+    let mut t = target(home, id);
+    t.min_age = Duration::ZERO;
+    t
+}
+
+#[test]
+fn temp_files_are_removed_but_the_folder_stays() {
     let home = tempfile::tempdir().unwrap();
     let h = home.path();
     write(&h.join("tmp/old.log"), 50_000);
-    write(&h.join("tmp/fresh.log"), 50_000);
-    make_old(&h.join("tmp/old.log"), 3);
-
-    let t = target(h, "temp");
-    let found = clean::measure(&t);
-    assert_eq!(found.count, 1, "only the day-old file qualifies");
-    assert!(found.examples[0].ends_with("old.log"));
-    assert!(found.bytes >= 50_000);
-
+    write(&h.join("tmp/sub/deep.bin"), 80_000);
+    let found = clean::measure(&any_age(h, "temp"));
+    assert_eq!(found.count, 2);
+    assert!(found.bytes >= 130_000);
     let report = clean::clean(&[found], Mode::Delete);
-    assert_eq!((report.removed, report.skipped), (1, 0));
-    assert!(!h.join("tmp/old.log").exists());
-    assert!(h.join("tmp/fresh.log").exists());
+    assert_eq!((report.removed, report.skipped), (2, 0));
+    assert!(!h.join("tmp/old.log").exists() && !h.join("tmp/sub").exists());
     assert!(h.join("tmp").is_dir(), "the folder itself stays");
 }
 
 #[test]
-fn caches_are_measured_and_moved_to_the_trash_or_deleted() {
+fn caches_are_measured_and_deleted() {
     let home = tempfile::tempdir().unwrap();
     let h = home.path();
-    let caches = match std::env::consts::OS {
-        "macos" => h.join("Library/Caches"),
-        "windows" => h.join("AppData/Local/CrashDumps"),
-        _ => h.join(".cache"),
+    let (caches, id) = match std::env::consts::OS {
+        "macos" => (h.join("Library/Caches"), "caches"),
+        "windows" => (h.join("AppData/Local/CrashDumps"), "crash-dumps"),
+        _ => (h.join(".cache"), "caches"),
     };
-    let id = if cfg!(windows) { "crash-dumps" } else { "caches" };
     write(&caches.join("app/blob.bin"), 200_000);
     write(&caches.join("other.bin"), 10_000);
-    make_old(&caches.join("other.bin"), 2);
-    // The app folder was just written; age it so it qualifies.
-    let old = SystemTime::now() - Duration::from_secs(7 * 86_400);
-    fs::File::open(caches.join("app/blob.bin")).ok();
-    #[cfg(unix)]
-    {
-        let c = std::ffi::CString::new(caches.join("app").to_str().unwrap()).unwrap();
-        let t = libc_timeval(old);
-        unsafe { utimes(c.as_ptr(), t.as_ptr()) };
-    }
-
-    let found = clean::measure(&target(h, id));
-    let expected = if cfg!(unix) { 2 } else { 1 };
-    assert_eq!(found.count, expected);
-    assert_eq!(found.examples.len(), expected);
-
+    let found = clean::measure(&any_age(h, id));
+    assert_eq!(found.count, 2);
+    assert!(found.bytes >= 210_000);
     let report = clean::clean(&[found], Mode::Delete);
-    assert_eq!(report.removed, expected);
-    assert!(!caches.join("other.bin").exists());
-    assert!(caches.is_dir());
+    assert_eq!(report.removed, 2);
+    assert!(caches.is_dir() && fs::read_dir(&caches).unwrap().next().is_none());
 }
 
-#[cfg(unix)]
-extern "C" {
-    fn utimes(path: *const std::os::raw::c_char, times: *const [i64; 2]) -> i32;
-}
-
-#[cfg(unix)]
-fn libc_timeval(t: SystemTime) -> Vec<[i64; 2]> {
-    let secs = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
-    vec![[secs, 0], [secs, 0]]
+#[test]
+fn an_item_replaced_after_measuring_is_skipped() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path();
+    write(&h.join("tmp/swap.bin"), 1000);
+    let found = clean::measure(&any_age(h, "temp"));
+    assert_eq!(found.count, 1);
+    // Replace it with a folder under the same name.
+    fs::remove_file(h.join("tmp/swap.bin")).unwrap();
+    fs::create_dir_all(h.join("tmp/swap.bin")).unwrap();
+    let report = clean::clean(&[found], Mode::Delete);
+    assert_eq!((report.removed, report.skipped), (0, 1));
+    assert!(h.join("tmp/swap.bin").is_dir());
 }
 
 #[test]
@@ -96,11 +103,9 @@ fn nothing_outside_a_cleanup_folder_can_be_removed() {
     let home = tempfile::tempdir().unwrap();
     let h = home.path();
     write(&h.join("tmp/old.log"), 1000);
-    make_old(&h.join("tmp/old.log"), 3);
     write(&h.join("precious.txt"), 1000);
-    make_old(&h.join("precious.txt"), 3);
 
-    let mut found = clean::measure(&target(h, "temp"));
+    let mut found = clean::measure(&any_age(h, "temp"));
     // Tamper with the measured list, as a bug or a race might.
     found.items.push((h.join("precious.txt"), 1000));
     found.items.push((h.join("tmp/../precious.txt"), 1000));
@@ -120,9 +125,7 @@ fn symlinks_are_removed_not_followed() {
     write(&h.join("keep/important.txt"), 1000);
     fs::create_dir_all(h.join("tmp")).unwrap();
     std::os::unix::fs::symlink(h.join("keep"), h.join("tmp/link")).unwrap();
-    let mut t = target(h, "temp");
-    t.min_age = Duration::ZERO;
-    let found = clean::measure(&t);
+    let found = clean::measure(&any_age(h, "temp"));
     assert_eq!(found.count, 1);
     let report = clean::clean(&[found], Mode::Delete);
     assert_eq!(report.removed, 1);

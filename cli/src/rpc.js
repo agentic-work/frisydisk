@@ -16,7 +16,8 @@ export function findScanner() {
     const p = join(dir, exe);
     if (existsSync(p)) return p;
   }
-  return exe; // let the system search PATH
+  if (process.platform === "win32") throw new Error("frisyscan.exe was not found next to frisy. Reinstall frisy.");
+  return exe; // search PATH (never the current folder on macOS and Linux)
 }
 
 export class Rpc {

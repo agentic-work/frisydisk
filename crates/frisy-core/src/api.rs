@@ -47,6 +47,11 @@ impl Api {
         Api::default()
     }
 
+    /// The folder the open scan started from.
+    pub fn scan_root(&self) -> Option<String> {
+        self.scan.lock().unwrap().as_ref().map(|s| s.root_path.clone())
+    }
+
     fn scan(&self) -> Result<Arc<Scan>, String> {
         self.scan.lock().unwrap().clone().ok_or_else(|| "No scan is open.".to_string())
     }

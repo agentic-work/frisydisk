@@ -1,6 +1,8 @@
 @echo off
 rem FrisyDisk in the terminal. Works from PowerShell and Command Prompt.
 setlocal
+rem Find programs on PATH only, never in the current folder.
+set "NoDefaultCurrentDirectoryInExePath=1"
 set "FRISYSCAN=%~dp0frisyscan.exe"
 if /I "%~1"=="du" (
   "%FRISYSCAN%" %*

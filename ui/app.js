@@ -712,10 +712,8 @@ $("clean-top").onclick = openClean;
 // ---- Cleanup ----------------------------------------------------------------
 
 async function relaunchAsAdmin() {
-  const root = state.view?.crumbs?.[0];
   try {
-    const path = root ? await call("path", { id: root.id }) : "";
-    await T.core.invoke("relaunch_as_admin", { path });
+    await T.core.invoke("relaunch_as_admin");
   } catch (e) {
     fail(e);
   }
