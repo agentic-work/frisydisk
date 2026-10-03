@@ -18,7 +18,7 @@ fn make_old(p: &Path, days: u64) {
 }
 
 fn places(home: &Path) -> Places {
-    Places { home: home.to_path_buf(), temp: home.join("tmp"), local_app_data: Some(home.join("AppData/Local")), windows_dir: None }
+    Places { home: home.to_path_buf(), temp: home.join("tmp"), shared_temp: Vec::new(), local_app_data: Some(home.join("AppData/Local")), windows_dir: None }
 }
 
 fn target(home: &Path, id: &str) -> clean::Target {
@@ -192,5 +192,19 @@ fn every_platform_has_targets_and_none_is_the_home_folder() {
         let t = clean::targets(&places(home.path()), os);
         assert!(t.iter().any(|x| x.id == "temp"), "{os}");
         assert!(t.iter().all(|x| x.roots.iter().all(|r| r != home.path() && r.parent().is_some())), "{os}");
+    }
+}
+
+#[test]
+fn every_cleanup_folder_comes_from_the_given_places() {
+    // Tests rely on this: with a sandbox home and temp folder, no target may
+    // point anywhere else on the machine.
+    let home = tempfile::tempdir().unwrap();
+    for os in ["macos", "windows", "linux"] {
+        for t in clean::targets(&places(home.path()), os) {
+            for r in &t.roots {
+                assert!(r.starts_with(home.path()), "{os} {}: {}", t.id, r.display());
+            }
+        }
     }
 }

@@ -80,6 +80,9 @@ pub enum Mode {
 pub struct Places {
     pub home: PathBuf,
     pub temp: PathBuf,
+    /// Other shared temporary folders (Linux: /var/tmp). Only items owned by
+    /// this user are ever considered there.
+    pub shared_temp: Vec<PathBuf>,
     /// %LOCALAPPDATA% on Windows.
     pub local_app_data: Option<PathBuf>,
     pub windows_dir: Option<PathBuf>,
@@ -91,6 +94,7 @@ impl Places {
         Places {
             home: env("HOME").or_else(|| env("USERPROFILE")).unwrap_or_default(),
             temp: std::env::temp_dir(),
+            shared_temp: if cfg!(target_os = "linux") { vec![PathBuf::from("/var/tmp")] } else { Vec::new() },
             local_app_data: env("LOCALAPPDATA"),
             windows_dir: env("SystemRoot").or_else(|| env("windir")),
         }
@@ -152,8 +156,9 @@ pub fn targets(p: &Places, os: &str) -> Vec<Target> {
             ], HOUR));
         }
         _ => {
-            let mut tmp = target("temp", "Temporary files", "Your files in /tmp and /var/tmp untouched for a day", "temp",
-                vec![PathBuf::from("/tmp"), PathBuf::from("/var/tmp")], DAY);
+            let mut roots = vec![p.temp.clone()];
+            roots.extend(p.shared_temp.iter().cloned());
+            let mut tmp = target("temp", "Temporary files", "Your files in /tmp and /var/tmp untouched for a day", "temp", roots, DAY);
             tmp.own_only = true;
             t.push(tmp);
             t.push(target("caches", "App caches", "~/.cache: rebuilt by each app when needed", "cache", vec![h.join(".cache")], HOUR));
