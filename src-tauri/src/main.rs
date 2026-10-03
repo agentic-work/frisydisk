@@ -14,32 +14,52 @@ fn api(state: tauri::State<'_, Api>, cmd: String, args: Value) -> Result<Value, 
 /// Windows only lets administrators read some system folders. Start a new,
 /// elevated copy of the app (Windows asks for consent) on the folder that is
 /// open now, then close this one. The folder comes from the app's own state,
-/// never from the page.
+/// and no shell or script interpreter is involved.
 #[tauri::command]
 fn relaunch_as_admin(app: tauri::AppHandle, state: tauri::State<'_, Api>) -> Result<(), String> {
-    if !cfg!(windows) {
-        return Err("Only needed on Windows.".into());
-    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // PowerShell single-quoted strings: the only special character is the quote itself.
-    let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-    let mut script = format!("Start-Process -FilePath {} -Verb RunAs", quote(&exe.to_string_lossy()));
+    let mut params = String::new();
     if let Some(root) = state.scan_root() {
-        // A real folder, and nothing that could end the quoted argument early.
         if !std::path::Path::new(&root).is_dir() || root.contains('"') {
             return Err("The open folder cannot be reopened.".into());
         }
-        script.push_str(&format!(" -ArgumentList {}, {}", quote("--scan"), quote(&format!("\"{root}\""))));
+        params = format!("--scan {}", quote_arg(&root));
     }
-    let status = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("Windows did not start FrisyDisk as administrator.".into());
-    }
+    run_elevated(&exe, &params)?;
     app.exit(0);
     Ok(())
+}
+
+/// Quote one argument for the Windows command line: a trailing backslash would
+/// otherwise escape the closing quote.
+fn quote_arg(s: &str) -> String {
+    let trailing = s.len() - s.trim_end_matches('\\').len();
+    format!("\"{}{}\"", s, "\\".repeat(trailing))
+}
+
+#[cfg(windows)]
+fn run_elevated(exe: &std::path::Path, params: &str) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |s: &std::ffi::OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let verb = wide("runas".as_ref());
+    let file = wide(exe.as_os_str());
+    let args = wide(params.as_ref());
+    let result = unsafe {
+        ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), args.as_ptr(), std::ptr::null(), SW_SHOWNORMAL)
+    };
+    // ShellExecute reports success with a value above 32.
+    if result as isize > 32 {
+        Ok(())
+    } else {
+        Err("Windows did not start FrisyDisk as administrator.".into())
+    }
+}
+
+#[cfg(not(windows))]
+fn run_elevated(_: &std::path::Path, _: &str) -> Result<(), String> {
+    Err("Only needed on Windows.".into())
 }
 
 /// Lets scripted runs pass `--scan PATH --mode sankey --tab types`.
