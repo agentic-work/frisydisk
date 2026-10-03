@@ -7,3 +7,5 @@ src-tauri/gen/
 .playwright-mcp/
 .build/
 .swiftpm/
+cli/node_modules/
+cli/dist/

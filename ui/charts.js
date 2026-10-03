@@ -15,6 +15,7 @@ function theme() {
 /** Colour of a chart item: hue from its place around the focused folder. */
 export function colorFor(node, opts = {}) {
   const { lift = false, alpha = 1, dark = true } = opts;
+  if (node && isHidden(node)) return `oklch(${dark ? 0.36 : 0.58} 0.03 265 / ${alpha})`;
   if (!node || node.id == null) return `oklch(${dark ? 0.5 : 0.72} 0.015 250 / ${0.55 * alpha})`;
   const hue = 28 + ((node.h0 + node.h1) / 2) * 325;
   const d = Math.max(0, (node.depth || 1) - 1);
@@ -41,6 +42,25 @@ function related(node, hover) {
   if (!hover) return true;
   for (let n = node; n; n = n.parent) if (n === hover) return true;
   return false;
+}
+
+/** Hidden space and its parts. */
+export function isHidden(node) {
+  return Boolean(node.hidden || node.parent?.hidden);
+}
+
+/** Diagonal stripes drawn over hidden space so it never reads as a folder. */
+function stripes(ctx, dark) {
+  const tile = document.createElement("canvas");
+  tile.width = tile.height = 8;
+  const t = tile.getContext("2d");
+  t.strokeStyle = dark ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.35)";
+  t.lineWidth = 2;
+  t.beginPath();
+  t.moveTo(-2, 10);
+  t.lineTo(10, -2);
+  t.stroke();
+  return ctx.createPattern(tile, "repeat");
 }
 
 export class Chart {
@@ -177,6 +197,10 @@ export class Chart {
       ctx.closePath();
       ctx.fillStyle = colorFor(s.node, { lift: lit, alpha: dim ? 0.3 : 1, dark: th.dark });
       ctx.fill();
+      if (isHidden(s.node)) {
+        ctx.fillStyle = stripes(ctx, th.dark);
+        ctx.fill();
+      }
       ctx.stroke();
     }
 
@@ -185,7 +209,7 @@ export class Chart {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       for (const s of this.shapes) {
-        if (s.depth > 3 || s.node.id == null) continue;
+        if (s.depth > 3 || (s.node.id == null && !s.node.hidden)) continue;
         const rm = (edges[s.depth - 1] + edges[s.depth]) / 2;
         const band = edges[s.depth] - edges[s.depth - 1];
         const arc = (s.a1 - s.a0) * turn * rm;

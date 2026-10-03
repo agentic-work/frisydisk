@@ -16,8 +16,9 @@ CI builds and launches the app on macOS and Windows for every pull request; it
 has to pass before a change can be merged. Every pull request is reviewed and
 merged by the maintainer.
 
-The one rule that is not up for debate: FrisyDisk never deletes anything
-without the person confirming it, and then only by moving it to the Trash or
-Recycle Bin. The advisor only ever produces text.
+The one rule that is not up for debate: FrisyDisk never removes anything
+without the person choosing it and confirming. Clean up only ever touches items
+inside its known temp, cache, log and build folders, and offers the Trash as
+well as permanent deletion. The advisor only ever produces text.
 
 By contributing you agree that your work is released under the MIT licence.

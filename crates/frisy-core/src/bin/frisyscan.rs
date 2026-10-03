@@ -1,6 +1,8 @@
 //! frisyscan PATH [--top N] [--advise [MODEL]]   scan and print totals
 //! frisyscan --facts                             the machine report the advisor sees
 //! frisyscan serve [--port N] [--ui DIR]         serve the UI and API on 127.0.0.1 for development
+//! frisyscan du [-c] [-b] PATH...                like `du -sh`, only much faster
+//! frisyscan rpc                                 JSON lines on stdin/stdout, for the terminal UI
 
 use frisy_core::advisor::{self, Message};
 use frisy_core::settings::Settings;
@@ -30,6 +32,11 @@ fn main() {
     if show_facts {
         println!("{}", facts::machine_report());
         return;
+    }
+    match args.first().map(String::as_str) {
+        Some("du") => return du(&args[1..]),
+        Some("rpc") => return rpc(),
+        _ => {}
     }
     if args.first().map(String::as_str) == Some("serve") {
         serve(port, &ui);
@@ -141,5 +148,87 @@ fn serve(port: u16, ui: &str) {
         };
         let header = tiny_http::Header::from_bytes("Content-Type", mime).unwrap();
         let _ = request.respond(tiny_http::Response::from_file(std::fs::File::open(file).unwrap()).with_header(header));
+    }
+}
+
+/// `du -sh` style totals: one line per path, plus a grand total with -c.
+/// -b prints exact bytes instead of rounded units.
+fn du(args: &[String]) {
+    let total_line = args.iter().any(|a| a == "-c" || a.starts_with("-") && !a.starts_with("--") && a.contains('c'));
+    let exact = args.iter().any(|a| a == "-b" || a.starts_with("-") && !a.starts_with("--") && a.contains('b'));
+    let mut paths: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(String::as_str).collect();
+    if paths.is_empty() {
+        paths.push(".");
+    }
+    let show = |n: u64| if exact { n.to_string() } else { bytes(n) };
+    let mut total = 0u64;
+    let mut failed = false;
+    for p in paths {
+        let meta = match std::fs::symlink_metadata(p) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("frisyscan: {p}: {e}");
+                failed = true;
+                continue;
+            }
+        };
+        let size = if meta.is_dir() {
+            let scan = Scan::run(p);
+            let n = scan.tree.lock().unwrap().nodes[0].size;
+            n
+        } else {
+            on_disk(&meta)
+        };
+        total += size;
+        println!("{:>10}\t{p}", show(size));
+    }
+    if total_line {
+        println!("{:>10}\ttotal", show(total));
+    }
+    if failed {
+        std::process::exit(1);
+    }
+}
+
+#[cfg(unix)]
+fn on_disk(m: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    m.blocks() * 512
+}
+
+#[cfg(not(unix))]
+fn on_disk(m: &std::fs::Metadata) -> u64 {
+    m.len()
+}
+
+/// JSON lines on stdin and stdout: `{"id":1,"cmd":"view","args":{...}}` in,
+/// `{"id":1,"ok":...}` or `{"id":1,"error":"..."}` out. Each request runs on
+/// its own thread so a slow one (a cleanup measurement) never blocks polling.
+fn rpc() {
+    use std::io::BufRead;
+    use std::sync::{Arc, Mutex};
+    let api = Arc::new(Api::new());
+    let out = Arc::new(Mutex::new(std::io::stdout()));
+    let mut running = Vec::new();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        let Ok(req) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        let (api, out) = (api.clone(), out.clone());
+        running.retain(|h: &std::thread::JoinHandle<()>| !h.is_finished());
+        running.push(std::thread::spawn(move || {
+            let id = req["id"].clone();
+            let cmd = req["cmd"].as_str().unwrap_or("").to_string();
+            let reply = match api.call(&cmd, &req["args"]) {
+                Ok(v) => serde_json::json!({ "id": id, "ok": v }),
+                Err(e) => serde_json::json!({ "id": id, "error": e }),
+            };
+            let mut o = out.lock().unwrap();
+            let _ = writeln!(o, "{reply}");
+            let _ = o.flush();
+        }));
+    }
+    // Input closed: answer what is still in flight, then exit.
+    for h in running {
+        let _ = h.join();
     }
 }

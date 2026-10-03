@@ -19,6 +19,9 @@ jobs:
           - name: Windows
             os: windows-latest
             bundles: nsis
+          - name: Linux
+            os: ubuntu-latest
+            bundles: ""
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,7 +40,25 @@ jobs:
         shell: bash
         run: cargo run --release -p frisy-core --bin frisyscan -- "$HOME" --top 8
 
+      - name: Terminal app
+        shell: bash
+        run: |
+          cargo build --release -p frisy-core --bin frisyscan
+          exe=target/release/frisyscan; [ "$RUNNER_OS" = Windows ] && exe=$exe.exe
+          platform=unix; [ "$RUNNER_OS" = Windows ] && platform=windows-x64
+          scripts/package-cli.sh "$platform" 0.0.0 "$exe"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c "build\\cli\\frisy\\frisy.cmd" --print "$GITHUB_WORKSPACE"
+            cmd //c "build\\cli\\frisy\\frisy.cmd" du -c "$GITHUB_WORKSPACE" "$HOME"
+            cmd //c "build\\cli\\frisy\\frisy.cmd" clean --print
+          else
+            build/cli/frisy/frisy --print "$GITHUB_WORKSPACE"
+            build/cli/frisy/frisy du -c "$GITHUB_WORKSPACE" "$HOME"
+            build/cli/frisy/frisy clean --print
+          fi
+
       - name: Build the app
+        if: matrix.bundles != ''
         run: |
           npm ci
           npx tauri build --bundles ${{ matrix.bundles }}
@@ -65,6 +86,7 @@ jobs:
           kill $pid
 
       - uses: actions/upload-artifact@v4
+        if: matrix.bundles != ''
         with:
           name: FrisyDisk-${{ matrix.name }}
           path: |

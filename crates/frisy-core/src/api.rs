@@ -3,6 +3,8 @@
 //! development server expose exactly the same behaviour.
 
 use crate::advisor::{self, Advisor, Backend};
+use crate::clean::{self, Found, Mode, Places};
+use crate::hidden::{self, Hidden};
 use crate::facts;
 use crate::scan::Scan;
 use crate::settings::Settings;
@@ -17,11 +19,22 @@ pub struct Api {
     collector: Mutex<Vec<NodeId>>,
     advisor: Advisor,
     settings: Mutex<Settings>,
+    /// Hidden space for the open scan, worked out once it finishes.
+    hidden: Mutex<Option<Option<Hidden>>>,
+    /// The last cleanup measurement; `clean_run` only removes what it lists.
+    cleanup: Mutex<Vec<Found>>,
 }
 
 impl Default for Api {
     fn default() -> Api {
-        Api { scan: Mutex::new(None), collector: Mutex::new(Vec::new()), advisor: Advisor::default(), settings: Mutex::new(Settings::load()) }
+        Api {
+            scan: Mutex::new(None),
+            collector: Mutex::new(Vec::new()),
+            advisor: Advisor::default(),
+            settings: Mutex::new(Settings::load()),
+            hidden: Mutex::new(None),
+            cleanup: Mutex::new(Vec::new()),
+        }
     }
 }
 
@@ -57,6 +70,7 @@ impl Api {
         }
         self.collector.lock().unwrap().clear();
         self.advisor.reset();
+        *self.hidden.lock().unwrap() = None;
         let scan = Scan::start(path);
         let root = scan.root_path.clone();
         *self.scan.lock().unwrap() = Some(scan);
@@ -112,7 +126,18 @@ impl Api {
                 if !node.is_dir() || node.flags & FLAG_DETACHED != 0 {
                     return Err("That folder is no longer in view.".into());
                 }
+                let size = tree.nodes[0].size;
+                drop(tree);
+                // Hidden space only makes sense for a finished scan of a whole volume.
+                let hidden_space = if focus == 0 && scan.is_finished() {
+                    let mut cached = self.hidden.lock().unwrap();
+                    cached.get_or_insert_with(|| hidden::hidden_space(&scan.root_path, size)).clone()
+                } else {
+                    None
+                };
+                let tree = scan.tree.lock().unwrap();
                 Ok(json!({
+                    "hidden": hidden_space,
                     "tree": view::view(&tree, focus, depth, min),
                     "rows": view::rows(&tree, focus, limit),
                     "crumbs": view::crumbs(&tree, focus),
@@ -219,6 +244,42 @@ impl Api {
                 }
                 self.collector.lock().unwrap().clear();
                 Ok(json!({ "moved": moved, "freed": freed, "failed": failed }))
+            }
+
+            // Cleanup
+            "elevated" => Ok(json!(clean::is_elevated())),
+            "clean_scan" => {
+                let places = Places::of_this_machine();
+                let targets = clean::targets(&places, std::env::consts::OS);
+                let mut found: Vec<Found> = std::thread::scope(|s| {
+                    let handles: Vec<_> = targets.iter().map(|t| s.spawn(move || clean::measure(t))).collect();
+                    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+                });
+                let days = args["stale_days"].as_u64().unwrap_or(90);
+                if let Some(scan) = self.scan.lock().unwrap().clone().filter(|s| s.is_finished()) {
+                    let tree = scan.tree.lock().unwrap();
+                    found.push(clean::stale_build_folders(&tree, days));
+                }
+                found.retain(|f| f.count > 0);
+                found.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+                let shown = to_json(&found);
+                *self.cleanup.lock().unwrap() = found;
+                Ok(json!({ "targets": shown, "elevated": clean::is_elevated(), "scan_open": self.scan.lock().unwrap().is_some() }))
+            }
+            "clean_run" => {
+                let ids: Vec<String> = args["ids"].as_array().ok_or("missing `ids`")?.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                let mode = match args["mode"].as_str() {
+                    Some("delete") => Mode::Delete,
+                    Some("trash") => Mode::Trash,
+                    _ => return Err("`mode` must be trash or delete".into()),
+                };
+                let chosen: Vec<Found> = self.cleanup.lock().unwrap().iter().filter(|f| ids.contains(&f.id)).cloned().collect();
+                if chosen.is_empty() {
+                    return Err("Nothing selected. Measure again and pick what to clean.".into());
+                }
+                let report = clean::clean(&chosen, mode);
+                self.cleanup.lock().unwrap().clear();
+                Ok(to_json(&report))
             }
 
             // Advisor

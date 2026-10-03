@@ -125,3 +125,98 @@ jobs:
             cp target/universal-apple-darwin/release/bundle/dmg/*.dmg "FrisyDisk-$v-macos-universal.dmg"
           fi
           gh release upload "$GITHUB_REF_NAME" FrisyDisk-"$v"-* --clobber
+
+  # The terminal app: frisyscan plus the Ink interface and launchers, one
+  # archive per platform. Linux builds are static (musl), so they run on any distribution.
+  cli:
+    name: Terminal app ${{ matrix.platform }}
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64, os: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { platform: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { platform: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { platform: macos-universal, os: macos-latest, target: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target || 'aarch64-apple-darwin,x86_64-apple-darwin' }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frisyscan
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+            cargo build --release -p frisy-core --bin frisyscan --target ${{ matrix.target }}
+            echo "SCANNER=target/${{ matrix.target }}/release/frisyscan" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            cargo build --release -p frisy-core --bin frisyscan
+            echo "SCANNER=target/release/frisyscan.exe" >> "$GITHUB_ENV"
+          else
+            cargo build --release -p frisy-core --bin frisyscan --target aarch64-apple-darwin
+            cargo build --release -p frisy-core --bin frisyscan --target x86_64-apple-darwin
+            lipo -create -output frisyscan target/aarch64-apple-darwin/release/frisyscan target/x86_64-apple-darwin/release/frisyscan
+            echo "SCANNER=frisyscan" >> "$GITHUB_ENV"
+          fi
+
+      - name: Sign frisyscan (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          if (-not $env:AZURE_CLIENT_SECRET) { "No Azure signing secrets: unsigned"; exit 0 }
+          cargo install trusted-signing-cli --locked
+          trusted-signing-cli -e "${{ vars.AZURE_SIGNING_ENDPOINT }}" -a "${{ vars.AZURE_SIGNING_ACCOUNT }}" -c "${{ vars.AZURE_SIGNING_PROFILE }}" -d "FrisyDisk" $env:SCANNER
+          $sig = Get-AuthenticodeSignature $env:SCANNER
+          "$($env:SCANNER): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne "Valid") { throw "frisyscan.exe is not signed" }
+
+      - name: Sign frisyscan (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then codesign --force --sign - frisyscan; exit 0; fi
+          kc="$RUNNER_TEMP/signing.keychain-db"; pw=$(openssl rand -hex 16)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 900 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$kc" --options runtime --timestamp frisyscan
+          codesign -dvv frisyscan 2>&1 | grep -E "Authority=Developer ID Application|flags="
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Package and smoke-test
+        shell: bash
+        run: |
+          archive=$(scripts/package-cli.sh ${{ matrix.platform }} "${GITHUB_REF_NAME#v}" "$SCANNER" | tail -1)
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmd //c "build\\cli\\frisy\\frisy.cmd" --print "$GITHUB_WORKSPACE"
+          else
+            build/cli/frisy/frisy --print "$GITHUB_WORKSPACE"
+            file build/cli/frisy/frisyscan
+          fi
+
+      - name: Attach to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber

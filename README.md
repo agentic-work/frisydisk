@@ -21,8 +21,16 @@ interface, packaged with Tauri.
   up only the largest folders.
 - A synced list, search, a largest-files list and a file-type breakdown for
   whatever folder you are in.
+- Hidden space: when you scan a whole volume, the space it uses that no scan can
+  see (swap, snapshots, purgeable space, system volumes, folders you cannot read)
+  shows as its own striped slice, broken down where the system reports it.
 - Collector: stage items, review them, then move them to the Trash (Recycle Bin
-  on Windows) after a confirmation. Nothing is deleted permanently.
+  on Windows) after a confirmation.
+- Clean up: temporary files, app caches, logs, developer caches and build folders
+  (node_modules, target and the like) in projects untouched for 90 days. You pick
+  the categories and choose Move to Trash or Delete permanently. Anything changed
+  in the last hour (temporary files: the last day) is left alone, links are never
+  followed, and nothing outside those folders can be touched.
 - Advisor: sends the scan and a summary of your volumes, including NAS shares,
   to a model and asks for non-destructive ways to improve I/O and use existing
   storage better. It only produces text, and any command in an answer that
@@ -46,6 +54,35 @@ turn the advisor off. Keys are stored in `settings.json` in your user config
 folder (readable only by you on macOS and Linux) and are never sent to the
 interface.
 
+## Terminal app
+
+`frisy` shows the same thing in a terminal, on macOS, Linux and Windows
+(PowerShell or Command Prompt). It uses the same fast scanner as the app.
+
+```sh
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.ps1 | iex
+```
+
+```sh
+frisy ~              # explore: arrows move, enter opens, backspace goes up, tab switches view
+frisy clean          # temp files, caches, logs and unused build folders
+frisy du -c ~/*      # like du -sch, much faster
+frisy --print /      # largest items, as plain text
+```
+
+The interactive view needs Node.js 18 or newer; without it `frisy` prints a
+summary. To see folders only an administrator can read, run it with `sudo`, or
+from PowerShell opened as Administrator.
+
+On this author's Mac, `frisy du` totalled a 69 GB folder in about a minute where
+`du -sch` took six and a half.
+
 ## Build
 
 You need Rust, Node 20 or later, and the platform tools Tauri asks for
@@ -65,6 +102,7 @@ npx tauri build     # build an installer for this platform
 | `crates/frisy-core` | Scanner, tree, analysis, advisor and the JSON API. No UI. |
 | `crates/frisy-core/src/bin/frisyscan.rs` | Command-line scanner and development server. |
 | `ui/` | The interface: plain HTML, CSS and JavaScript modules, no bundler. |
+| `cli/` | The terminal app, built with Ink and bundled into one file. |
 | `src-tauri/` | The desktop shell. It forwards one `api` command to the core. |
 | `scripts/` | Icon drawing and the signed macOS release. |
 

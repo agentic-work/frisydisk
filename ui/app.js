@@ -156,6 +156,16 @@ async function refresh(animate) {
   }
   state.view = res;
   state.progress = res.progress;
+  // Hidden space joins the chart as one grey slice, broken into its known parts.
+  state.hidden = res.hidden || null;
+  if (state.focus === 0) state.rootSize = res.tree.size;
+  if (state.hidden && state.focus === 0) {
+    const h = state.hidden;
+    const parts = h.parts.map((p) => ({ id: null, name: p.name, size: p.bytes, files: 0, dir: false, group: 0, children: [] }));
+    if (h.other) parts.push({ id: null, name: "Snapshots, purgeable space and unreadable folders", size: h.other, files: 0, dir: false, group: 0, children: [] });
+    res.tree.children.push({ id: null, hidden: true, name: "Hidden space", size: h.bytes, files: 0, dir: false, group: 0, children: parts });
+    res.tree.size += h.bytes;
+  }
   state.tree = prepare(res.tree);
   state.byId = new Map();
   const index = (n) => {
@@ -163,7 +173,6 @@ async function refresh(animate) {
     (n.children || []).forEach(index);
   };
   index(state.tree);
-  if (state.focus === 0) state.rootSize = res.tree.size;
   chart.set(state.tree, state.mode, animate);
   renderCrumbs();
   renderHub();
@@ -293,7 +302,15 @@ function renderList() {
     rows = state.view.rows;
     empty = state.scanning ? "Scanning…" : "This folder is empty.";
   }
-  list.innerHTML = rows.map((r) => rowHtml(r, total)).join("") || `<p class="list-note">${empty}</p>`;
+  let html = rows.map((r) => rowHtml(r, total)).join("");
+  if (state.tab === "contents" && state.search.length < 2 && state.hidden && state.focus === 0) {
+    const h = state.hidden;
+    const what = [...h.parts.map((p) => p.name.toLowerCase()), h.other ? "snapshots, purgeable space and unreadable folders" : ""].filter(Boolean).join(", ");
+    html += `<div class="row hidden-row" title="Used on this volume but not visible to the scan: ${escapeHtml(what)}" style="--share:${(h.bytes / total).toFixed(4)}">
+      <span class="swatch"></span><div><div class="row-name">Hidden space</div><div class="row-sub">${escapeHtml(what)}</div></div>
+      <span class="row-size">${fmtBytes(h.bytes)}</span></div>`;
+  }
+  list.innerHTML = html || `<p class="list-note">${empty}</p>`;
 }
 
 function renderStatus() {
@@ -317,9 +334,13 @@ function renderStatus() {
     html +=
       state.platform === "macos"
         ? `<button id="privacy" title="Add FrisyDisk under Full Disk Access, then rescan">${plural(p.inaccessible, "folder")} could not be read</button>`
-        : `<span>${plural(p.inaccessible, "folder")} could not be read</span>`;
+        : state.platform === "windows" && !state.elevated
+          ? `<button id="elevate" title="Windows only lets administrators read some system folders">${plural(p.inaccessible, "folder")} could not be read: restart as administrator</button>`
+          : `<span>${plural(p.inaccessible, "folder")} could not be read</span>`;
   }
   el.innerHTML = html;
+  const elevate = $("elevate");
+  if (elevate) elevate.onclick = () => relaunchAsAdmin();
   const privacy = $("privacy");
   if (privacy) privacy.onclick = () => call("open_privacy_settings").catch(fail);
 }
@@ -375,8 +396,13 @@ $("chart").addEventListener("contextmenu", (ev) => {
 });
 
 const listEl = $("list");
-listEl.addEventListener("mouseover", (ev) => {
+// Rows without an id (the hidden-space row) are information only.
+const realRow = (ev) => {
   const row = ev.target.closest(".row");
+  return row && row.dataset.id ? row : null;
+};
+listEl.addEventListener("mouseover", (ev) => {
+  const row = realRow(ev);
   const node = row ? state.byId.get(Number(row.dataset.id)) : null;
   chart.setHover(node || null);
   renderStatus();
@@ -386,15 +412,15 @@ listEl.addEventListener("mouseleave", () => {
   renderStatus();
 });
 listEl.addEventListener("click", (ev) => {
-  const row = ev.target.closest(".row");
+  const row = realRow(ev);
   if (row && row.dataset.dir === "true") setFocus(Number(row.dataset.id));
 });
 listEl.addEventListener("dblclick", (ev) => {
-  const row = ev.target.closest(".row");
+  const row = realRow(ev);
   if (row && row.dataset.dir !== "true") call("open", { id: Number(row.dataset.id) }).catch(fail);
 });
 listEl.addEventListener("contextmenu", (ev) => {
-  const row = ev.target.closest(".row");
+  const row = realRow(ev);
   if (!row) return;
   ev.preventDefault();
   showMenu(ev.clientX, ev.clientY, { id: Number(row.dataset.id), dir: row.dataset.dir === "true" });
@@ -680,6 +706,106 @@ $("backend").onchange = (ev) => {
   renderAdvisor();
 };
 $("settings-start").onclick = openSettings;
+$("clean-start").onclick = openClean;
+$("clean-top").onclick = openClean;
+
+// ---- Cleanup ----------------------------------------------------------------
+
+async function relaunchAsAdmin() {
+  const root = state.view?.crumbs?.[0];
+  try {
+    const path = root ? await call("path", { id: root.id }) : "";
+    await T.core.invoke("relaunch_as_admin", { path });
+  } catch (e) {
+    fail(e);
+  }
+}
+
+async function openClean() {
+  const card = openModal(`<h2>Clean up</h2><p>Measuring temporary files, caches and logs…</p>`);
+  let r;
+  try {
+    r = await call("clean_scan", { stale_days: 90 });
+  } catch (e) {
+    card.innerHTML = `<h2>Clean up</h2><p>${escapeHtml(e.message)}</p><div class="modal-actions"><button class="primary" id="clean-close">Close</button></div>`;
+    card.querySelector("#clean-close").onclick = closeModal;
+    return;
+  }
+  const where = trashName();
+  const total = r.targets.reduce((s, t) => s + t.bytes, 0);
+  const admin = r.targets.some((t) => t.needs_admin);
+  card.innerHTML = `<h2>Clean up ${fmtBytes(total)}</h2>
+    <p>Apps rebuild caches and temporary files when they need them. Anything changed in the last hour (temporary files: the last day) is left alone, and nothing outside these folders is touched.</p>
+    <div class="clean-list">${
+      r.targets
+        .map(
+          (t) => `<label class="clean-item"><input type="checkbox" data-id="${escapeHtml(t.id)}" ${t.group === "dev" || t.group === "trash" ? "" : "checked"}>
+          <span><strong>${escapeHtml(t.label)}</strong> <span class="row-size">${fmtBytes(t.bytes)}, ${plural(t.count, "item")}</span>
+          ${t.delete_only ? `<em class="warn-text">deleted permanently</em>` : ""}${t.needs_admin ? `<em class="warn-text">partly needs administrator</em>` : ""}
+          <small>${escapeHtml(t.detail)}</small>${t.examples[0] ? `<small class="example">${escapeHtml(t.examples[0])}</small>` : ""}</span>
+          </label>`,
+        )
+        .join("") || `<p class="list-note">Nothing to clean right now.</p>`
+    }</div>
+    ${!r.scan_open ? `<p class="note">Scan your home folder first to also find build folders (node_modules, target) in projects untouched for 90 days.</p>` : ""}
+    ${admin && state.platform === "windows" ? `<p class="note"><button id="clean-elevate">Restart as administrator</button> to include system temp files and Windows Update downloads.</p>` : ""}
+    <p class="note" id="clean-sum"></p>
+    <div class="modal-actions"><button id="clean-cancel">Cancel</button>
+      <button id="clean-trash">Move to ${where}</button><button class="warn" id="clean-delete">Delete permanently</button></div>`;
+  const boxes = [...card.querySelectorAll("input[type=checkbox]")];
+  const picked = () => r.targets.filter((t) => boxes.find((b) => b.dataset.id === t.id)?.checked);
+  const update = () => {
+    const p = picked();
+    const size = p.reduce((s, t) => s + t.bytes, 0);
+    card.querySelector("#clean-sum").textContent = p.length
+      ? `${p.length === 1 ? "1 category" : `${p.length} categories`} selected, ${fmtBytes(size)}. Moving to the ${where} frees the space only when you empty it; deleting frees it now.`
+      : "Select what to clean.";
+    card.querySelector("#clean-trash").disabled = !p.length || p.every((t) => t.delete_only);
+    card.querySelector("#clean-delete").disabled = !p.length;
+  };
+  boxes.forEach((b) => (b.onchange = update));
+  const wire = () => {
+    card.querySelector("#clean-cancel").onclick = closeModal;
+    card.querySelector("#clean-trash").onclick = () => run("trash");
+    card.querySelector("#clean-delete").onclick = askDelete;
+  };
+  const elevate = card.querySelector("#clean-elevate");
+  if (elevate) elevate.onclick = relaunchAsAdmin;
+  const run = async (mode) => {
+    const ids = picked().map((t) => t.id);
+    card.querySelector(".modal-actions").innerHTML = `<span class="note">Cleaning…</span>`;
+    try {
+      const rep = await call("clean_run", { ids, mode });
+      closeModal();
+      const verb = mode === "trash" ? `Moved ${plural(rep.removed, "item")} (${fmtBytes(rep.freed)}) to the ${where}` : `Deleted ${plural(rep.removed, "item")} and freed ${fmtBytes(rep.freed)}`;
+      toast(`${verb}.${rep.skipped ? ` Skipped ${fmtCount(rep.skipped)} in use or changed.` : ""}${state.view ? " Rescan to update the chart." : ""}`, 9000);
+      if (state.platform && !$("start").hidden) showStart();
+    } catch (e) {
+      closeModal();
+      fail(e);
+    }
+  };
+  // Permanent deletion always takes a second, explicit click.
+  function askDelete() {
+    const p = picked();
+    const size = p.reduce((s, t) => s + t.bytes, 0);
+    const n = p.reduce((s, t) => s + t.count, 0);
+    const actions = card.querySelector(".modal-actions");
+    actions.innerHTML = `<span class="note warn-text">Delete ${plural(n, "item")} (${fmtBytes(size)}) for good? This cannot be undone.</span>
+      <button id="clean-back">Back</button><button class="warn" id="clean-confirm">Delete for good</button>`;
+    boxes.forEach((b) => (b.disabled = true));
+    actions.querySelector("#clean-back").focus();
+    actions.querySelector("#clean-back").onclick = () => {
+      boxes.forEach((b) => (b.disabled = false));
+      actions.innerHTML = `<button id="clean-cancel">Cancel</button><button id="clean-trash">Move to ${where}</button><button class="warn" id="clean-delete">Delete permanently</button>`;
+      wire();
+      update();
+    };
+    actions.querySelector("#clean-confirm").onclick = () => run("delete");
+  }
+  wire();
+  update();
+}
 $("settings-top").onclick = openSettings;
 $("advisor-stop").onclick = () => call("advisor_stop").catch(fail);
 $("advisor-reset").onclick = async () => {
@@ -786,6 +912,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 async function init() {
   try {
     state.platform = await call("platform");
+    state.elevated = await call("elevated");
   } catch {}
 
   // Scripted runs: launch arguments in the app, query parameters in a browser.

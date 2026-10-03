@@ -150,7 +150,7 @@ fn last_component(path: &str) -> String {
 }
 
 /// Run a read-only command; `None` if it is missing, fails or takes too long.
-pub(crate) fn run(tool: &str, args: &[&str], timeout: Duration, max_chars: usize) -> Option<String> {
+pub fn run(tool: &str, args: &[&str], timeout: Duration, max_chars: usize) -> Option<String> {
     let mut cmd = Command::new(tool);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]

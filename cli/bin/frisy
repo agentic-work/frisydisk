@@ -1,0 +1,29 @@
+#!/bin/sh
+# FrisyDisk in the terminal. Runs the interactive view with Node.js 18+, and
+# falls back to a plain summary when Node is not installed.
+
+# Find the folder this script really lives in, following symlinks.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(cd "$(dirname "$self")" && pwd -P)
+scanner=$dir/frisyscan
+
+case ${1:-} in
+  du) exec "$scanner" "$@" ;;
+esac
+
+if command -v node >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 18 ? 0 : 1)' 2>/dev/null; then
+  FRISYSCAN=$scanner exec node "$dir/frisy.mjs" "$@"
+fi
+
+echo "frisy: the interactive view needs Node.js 18 or newer (https://nodejs.org). Showing a summary instead." >&2
+case ${1:-} in
+  clean | -* ) exec "$scanner" . --top 25 ;;
+  *) exec "$scanner" "${1:-.}" --top 25 ;;
+esac
