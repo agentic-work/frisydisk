@@ -6,8 +6,33 @@ on:
   pull_request:
 
 jobs:
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Fails on any known Rust vulnerability; unmaintained/unsound crates from
+      # the GTK stack stay warnings and do not block.
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      # Fails on any moderate-or-worse advisory in the production or dev tree.
+      - name: npm audit
+        run: |
+          npm audit --audit-level=moderate
+          ( cd cli && npm audit --audit-level=moderate )
+
   build:
     name: ${{ matrix.name }}
+    needs: audit
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

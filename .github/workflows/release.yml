@@ -26,9 +26,28 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
             gh release create "$GITHUB_REF_NAME" --draft --title "FrisyDisk ${GITHUB_REF_NAME#v}" --generate-notes
 
+  audit:
+    name: Audit dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - name: npm audit
+        run: |
+          npm audit --audit-level=moderate
+          ( cd cli && npm audit --audit-level=moderate )
+
   build:
     name: ${{ matrix.name }}
-    needs: draft
+    needs: [draft, audit]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -130,7 +149,7 @@ jobs:
   # archive per platform. Linux builds are static (musl), so they run on any distribution.
   cli:
     name: Terminal app ${{ matrix.platform }}
-    needs: draft
+    needs: [draft, audit]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
