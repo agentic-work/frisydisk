@@ -299,6 +299,13 @@ impl Api {
                 settings.save()?;
                 Ok(settings.public())
             }
+            // Check one provider with the values typed in the form (not saved), else the saved ones.
+            "test_provider" => {
+                let kind = args["kind"].as_str().ok_or("missing kind")?.to_string();
+                let mut settings = self.settings.lock().unwrap().clone();
+                settings.apply(&args["settings"]);
+                Ok(to_json(&advisor::test_provider(&settings, &kind)))
+            }
             "advisor_ask" => {
                 let backend: Backend = serde_json::from_value(args["backend"].clone()).map_err(|_| "Pick a model first.")?;
                 let follow_up = args["follow_up"].as_str().map(String::from);

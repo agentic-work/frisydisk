@@ -568,32 +568,45 @@ async function openSettings() {
     return fail(e);
   }
   const saved = (has) => (has ? "Saved. Leave blank to keep it, or type a new one." : "Not set");
+  const remove = (has, field) => (has ? ` <a href="#" data-clear="${field}">Remove key</a>` : "");
+  const actions = (kind) =>
+    `<div class="provider-actions"><button data-save="${kind}">Save</button><button data-test="${kind}">Test</button><span class="provider-result" id="result-${kind}"></span></div>`;
   const card = openModal(`<h2>Advisor settings</h2>
     <p>The advisor needs a model to talk to. It appears only when one of these is available.</p>
     <label class="check"><input type="checkbox" id="set-enabled" ${cfg.advisor_enabled ? "checked" : ""}> Use the advisor</label>
+    <div class="field"><label>GitHub Copilot</label>
+      <label class="check"><input type="checkbox" id="set-copilot" ${cfg.copilot_enabled ? "checked" : ""}> Use Copilot through VS Code</label>
+      <div class="field-pair"><input type="text" id="set-cp-url" value="${escapeHtml(cfg.copilot_url)}" placeholder="Bridge address (found automatically)" spellcheck="false">
+      <input type="password" id="set-cp-token" placeholder="Bridge token" autocomplete="off"></div>
+      <small>Found automatically while VS Code runs the agenticode extension. ${cfg.has_copilot_token ? "Token saved." : ""}${remove(cfg.has_copilot_token, "copilot_token")}</small>
+      ${actions("copilot")}</div>
     <div class="field"><label for="set-ollama">Ollama address</label>
       <input type="text" id="set-ollama" value="${escapeHtml(cfg.ollama_host)}" spellcheck="false">
-      <small>Runs on this computer by default. Point it at another machine to use an Ollama server on your network.</small></div>
+      <small>Runs on this computer by default. Point it at another machine to use an Ollama server on your network.</small>
+      ${actions("ollama")}</div>
     <div class="field"><label>AgenticWork</label>
       <div class="field-pair"><input type="text" id="set-aw-url" value="${escapeHtml(cfg.agenticwork_url)}" placeholder="https://your-agenticwork-host" spellcheck="false">
       <input type="password" id="set-aw-key" placeholder="API key" autocomplete="off"></div>
-      <small>${saved(cfg.has_agenticwork_key)}${cfg.has_agenticwork_key ? ` <a href="#" data-clear="agenticwork_key">Remove key</a>` : ""}</small></div>
+      <small>${saved(cfg.has_agenticwork_key)}${remove(cfg.has_agenticwork_key, "agenticwork_key")}</small>
+      ${actions("agenticwork")}</div>
     <div class="field"><label for="set-anthropic">Anthropic API key</label>
       <input type="password" id="set-anthropic" placeholder="sk-ant-…" autocomplete="off">
-      <small>${saved(cfg.has_anthropic_key)}${cfg.has_anthropic_key ? ` <a href="#" data-clear="anthropic_key">Remove key</a>` : ""}</small></div>
+      <small>${saved(cfg.has_anthropic_key)}${remove(cfg.has_anthropic_key, "anthropic_key")}</small>
+      ${actions("anthropic")}</div>
     <div class="field"><label for="set-openai">OpenAI API key</label>
       <input type="password" id="set-openai" placeholder="sk-…" autocomplete="off">
-      <small>${saved(cfg.has_openai_key)}${cfg.has_openai_key ? ` <a href="#" data-clear="openai_key">Remove key</a>` : ""}</small></div>
-    <p class="note">With AgenticWork, Anthropic, OpenAI or an Ollama server on another machine, the scan summary (folder and file names with sizes) is sent to that service when you ask for suggestions. Keys are stored on this computer in ${escapeHtml(cfg.file)}.</p>
+      <small>${saved(cfg.has_openai_key)}${remove(cfg.has_openai_key, "openai_key")}</small>
+      ${actions("openai")}</div>
+    <p class="note">With Copilot, AgenticWork, Anthropic, OpenAI or an Ollama server on another machine, the scan summary (folder and file names with sizes) is sent to that service when you ask for suggestions. Keys are stored on this computer in ${escapeHtml(cfg.file)}.</p>
     <div class="found" id="set-found"></div>
-    <div class="modal-actions"><button id="set-cancel">Close</button><button class="primary" id="set-save">Save and check</button></div>`);
+    <div class="modal-actions"><button id="set-cancel">Close</button></div>`);
   const found = card.querySelector("#set-found");
   const describe = (list) => {
     if (!card.querySelector("#set-enabled").checked) return "The advisor is off.";
     if (!list.length) return "Nothing to talk to yet, so the Advisor tab stays hidden.";
     const by = {};
     for (const b of list) by[b.kind] = (by[b.kind] || 0) + 1;
-    const names = { ollama: "Ollama", agenticwork: "AgenticWork", anthropic: "Anthropic", openai: "OpenAI" };
+    const names = { copilot: "Copilot", ollama: "Ollama", agenticwork: "AgenticWork", anthropic: "Anthropic", openai: "OpenAI" };
     return "Ready: " + Object.entries(by).map(([k, n]) => `${names[k] || k} (${plural(n, "model")})`).join(", ");
   };
   found.textContent = state.backends ? describe(state.backends) : "";
@@ -604,28 +617,59 @@ async function openSettings() {
       clear[a.dataset.clear] = "";
       a.parentElement.textContent = "Will be removed when you save.";
     };
-  card.querySelector("#set-cancel").onclick = closeModal;
-  card.querySelector("#set-save").onclick = async () => {
-    const change = {
-      advisor_enabled: card.querySelector("#set-enabled").checked,
-      ollama_host: card.querySelector("#set-ollama").value,
-      agenticwork_url: card.querySelector("#set-aw-url").value,
-      ...clear,
-    };
-    // A blank key field means "keep what is saved".
-    for (const [field, id] of [["agenticwork_key", "set-aw-key"], ["anthropic_key", "set-anthropic"], ["openai_key", "set-openai"]]) {
-      const v = card.querySelector("#" + id).value.trim();
-      if (v) change[field] = v;
-    }
-    found.textContent = "Checking…";
-    try {
-      await call("set_settings", change);
-      found.textContent = describe(await refreshBackends());
-      for (const id of ["set-aw-key", "set-anthropic", "set-openai"]) card.querySelector("#" + id).value = "";
-    } catch (e) {
-      found.textContent = e.message;
-    }
+  // Each provider's fields: [setting, input id, is a key]. A blank key field means "keep what is saved".
+  const fields = {
+    copilot: [["copilot_url", "set-cp-url"], ["copilot_token", "set-cp-token", true]],
+    ollama: [["ollama_host", "set-ollama"]],
+    agenticwork: [["agenticwork_url", "set-aw-url"], ["agenticwork_key", "set-aw-key", true]],
+    anthropic: [["anthropic_key", "set-anthropic", true]],
+    openai: [["openai_key", "set-openai", true]],
   };
+  const changeFor = (kind) => {
+    const change = { advisor_enabled: card.querySelector("#set-enabled").checked };
+    if (kind === "copilot") change.copilot_enabled = card.querySelector("#set-copilot").checked;
+    for (const [field, id, key] of fields[kind]) {
+      const v = card.querySelector("#" + id).value.trim();
+      if (field in clear) change[field] = "";
+      if (v || !key) change[field] = v;
+    }
+    return change;
+  };
+  card.querySelector("#set-cancel").onclick = closeModal;
+  for (const btn of card.querySelectorAll("[data-save]")) {
+    const kind = btn.dataset.save;
+    btn.onclick = async () => {
+      const result = card.querySelector("#result-" + kind);
+      result.textContent = "Saving…";
+      try {
+        await call("set_settings", changeFor(kind));
+        for (const [field, id, key] of fields[kind]) {
+          if (key) card.querySelector("#" + id).value = "";
+          delete clear[field];
+        }
+        result.textContent = "Saved.";
+        found.textContent = describe(await refreshBackends());
+      } catch (e) {
+        result.textContent = e.message;
+      }
+    };
+  }
+  for (const btn of card.querySelectorAll("[data-test]")) {
+    const kind = btn.dataset.test;
+    btn.onclick = async () => {
+      const result = card.querySelector("#result-" + kind);
+      result.textContent = "Testing…";
+      btn.disabled = true;
+      try {
+        const r = await call("test_provider", { kind, settings: changeFor(kind) });
+        result.textContent = r.ok ? `Works: ${r.model} answered in ${r.ms} ms (${plural(r.models, "model")} found).` : `Failed: ${r.error}`;
+      } catch (e) {
+        result.textContent = `Failed: ${e.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  }
 }
 
 function renderAdvisor() {

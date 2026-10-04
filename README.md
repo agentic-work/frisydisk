@@ -43,6 +43,7 @@ The Advisor tab appears only when there is a model to talk to. Under
 
 | Provider | What to set | Where your scan summary goes |
 | --- | --- | --- |
+| GitHub Copilot | nothing, it is found while VS Code runs the agenticode extension (or set the bridge address and token) | GitHub Copilot, through VS Code |
 | Ollama on this computer | nothing, it is detected at `127.0.0.1:11434` | nowhere, it stays local |
 | Ollama on another machine | its address | that machine |
 | AgenticWork | base URL and API key | your AgenticWork deployment |
@@ -50,7 +51,10 @@ The Advisor tab appears only when there is a model to talk to. Under
 | OpenAI | API key | OpenAI |
 
 With nothing configured and no local Ollama, the tab stays hidden. You can also
-turn the advisor off. Keys are stored in `settings.json` in your user config
+turn the advisor off. Each provider has its own **Save** button, which saves only
+that provider's fields, and a **Test** button, which lists its models and sends
+one tiny request, then shows the model used, how many models it found and the
+round trip time, or the actual error. Keys are stored in `settings.json` in your user config
 folder (readable only by you on macOS and Linux) and are never sent to the
 interface.
 

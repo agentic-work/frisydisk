@@ -16,6 +16,11 @@ pub struct Settings {
     pub agenticwork_key: String,
     pub anthropic_key: String,
     pub openai_key: String,
+    /// GitHub Copilot through the agenticode VS Code bridge, found by its lockfile.
+    pub copilot_enabled: bool,
+    /// Optional bridge address and token, for when the lockfile is elsewhere.
+    pub copilot_url: String,
+    pub copilot_token: String,
 }
 
 impl Default for Settings {
@@ -27,6 +32,9 @@ impl Default for Settings {
             agenticwork_key: String::new(),
             anthropic_key: String::new(),
             openai_key: String::new(),
+            copilot_enabled: true,
+            copilot_url: String::new(),
+            copilot_token: String::new(),
         }
     }
 }
@@ -96,6 +104,15 @@ impl Settings {
         if let Some(v) = text("openai_key") {
             self.openai_key = v;
         }
+        if let Some(b) = change["copilot_enabled"].as_bool() {
+            self.copilot_enabled = b;
+        }
+        if let Some(v) = text("copilot_url") {
+            self.copilot_url = if v.is_empty() { v } else { normalize_url(&v) };
+        }
+        if let Some(v) = text("copilot_token") {
+            self.copilot_token = v;
+        }
     }
 
     /// What the UI may see: never the keys themselves.
@@ -107,6 +124,9 @@ impl Settings {
             "has_agenticwork_key": !self.agenticwork_key.is_empty(),
             "has_anthropic_key": !self.anthropic_key.is_empty(),
             "has_openai_key": !self.openai_key.is_empty(),
+            "copilot_enabled": self.copilot_enabled,
+            "copilot_url": self.copilot_url,
+            "has_copilot_token": !self.copilot_token.is_empty(),
             "file": path().to_string_lossy(),
         })
     }

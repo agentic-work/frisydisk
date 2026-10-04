@@ -109,7 +109,7 @@ fn backends_follow_the_settings() {
     let (base, _) = mock(vec![("/api/tags", 200, tags), ("/v1/models", 200, models)]);
 
     // Nothing reachable and no keys: no backends, so the UI hides the advisor.
-    let mut s = Settings { ollama_host: "http://127.0.0.1:9".into(), ..Settings::default() };
+    let mut s = Settings { ollama_host: "http://127.0.0.1:9".into(), copilot_enabled: false, ..Settings::default() };
     assert!(advisor::backends(&s).is_empty());
 
     // Ollama on another address.
@@ -139,16 +139,17 @@ fn settings_are_saved_privately_and_keys_never_reach_the_ui() {
 
     let api = Api::new();
     let shown = api
-        .call("set_settings", &json!({ "ollama_host": "nas.local:11434/", "agenticwork_url": "https://chat.example.com/v1/", "agenticwork_key": " awc_secret ", "anthropic_key": "sk-ant-secret" }))
+        .call("set_settings", &json!({ "ollama_host": "nas.local:11434/", "agenticwork_url": "https://chat.example.com/v1/", "agenticwork_key": " awc_secret ", "anthropic_key": "sk-ant-secret", "copilot_url": "127.0.0.1:62783/", "copilot_token": "cop_secret" }))
         .unwrap();
     assert_eq!(shown["ollama_host"], "http://nas.local:11434");
     assert_eq!(shown["agenticwork_url"], "https://chat.example.com");
     assert_eq!((shown["has_agenticwork_key"].clone(), shown["has_anthropic_key"].clone(), shown["has_openai_key"].clone()), (json!(true), json!(true), json!(false)));
+    assert_eq!((shown["copilot_enabled"].clone(), shown["copilot_url"].clone(), shown["has_copilot_token"].clone()), (json!(true), json!("http://127.0.0.1:62783"), json!(true)));
     assert!(!shown.to_string().contains("secret"));
     assert!(!api.call("settings", &json!({})).unwrap().to_string().contains("secret"));
 
     let saved = Settings::load();
-    assert_eq!((saved.agenticwork_key.as_str(), saved.anthropic_key.as_str()), ("awc_secret", "sk-ant-secret"));
+    assert_eq!((saved.agenticwork_key.as_str(), saved.anthropic_key.as_str(), saved.copilot_token.as_str()), ("awc_secret", "sk-ant-secret", "cop_secret"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -156,8 +157,9 @@ fn settings_are_saved_privately_and_keys_never_reach_the_ui() {
     }
 
     // Leaving a key out keeps it; an empty string clears it; an empty host goes back to the default.
-    api.call("set_settings", &json!({ "advisor_enabled": false, "anthropic_key": "", "ollama_host": "" })).unwrap();
+    api.call("set_settings", &json!({ "advisor_enabled": false, "anthropic_key": "", "ollama_host": "", "copilot_enabled": false })).unwrap();
     let saved = Settings::load();
+    assert_eq!((saved.copilot_token.as_str(), saved.copilot_enabled), ("cop_secret", false));
     assert_eq!((saved.agenticwork_key.as_str(), saved.anthropic_key.as_str(), saved.advisor_enabled), ("awc_secret", "", false));
     assert_eq!(saved.ollama_host, settings::DEFAULT_OLLAMA);
     assert!(api.call("backends", &json!({})).unwrap().as_array().unwrap().is_empty());
@@ -165,4 +167,109 @@ fn settings_are_saved_privately_and_keys_never_reach_the_ui() {
 
     assert!(settings::is_local("http://127.0.0.1:11434") && settings::is_local("http://localhost:1"));
     assert!(!settings::is_local("http://nas.local:11434") && !settings::is_local("https://api.example.com"));
+}
+
+const COPILOT_MODELS: &str = "{\"data\":[{\"id\":\"copilot/gpt-5\",\"display_name\":\"GPT-5\"},{\"id\":\"copilot/claude-sonnet-5\",\"display_name\":\"Claude Sonnet 5\"},{\"id\":\"other/model\"}]}";
+const ANTHROPIC_OK: &str = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+
+/// Copilot settings that skip the lockfile, so these tests do not depend on
+/// whichever VS Code windows happen to be open.
+fn copilot_at(base: &str, token: &str) -> Settings {
+    Settings { ollama_host: "http://127.0.0.1:9".into(), copilot_url: base.into(), copilot_token: token.into(), ..Settings::default() }
+}
+
+#[test]
+fn copilot_bridge_is_found_from_a_live_lockfile() {
+    let (base, _) = mock(vec![("/v1/models", 200, COPILOT_MODELS)]);
+    let port = base.rsplit(':').next().unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let lm = dir.path().join("lm");
+    std::fs::create_dir_all(&lm).unwrap();
+    std::env::set_var("AGENTICODE_CONFIG_DIR", dir.path());
+    let me = std::process::id();
+    let write = |name: &str, v: serde_json::Value| std::fs::write(lm.join(name), v.to_string()).unwrap();
+    write("1.json", json!({ "port": 1, "token": "dead", "pid": 999_999_999u64, "ideName": "Visual Studio Code", "api": "anthropic-messages" }));
+    write("2.json", json!({ "port": 2, "token": "other", "pid": me, "ideName": "Visual Studio Code", "api": "openai" }));
+    let s = Settings { ollama_host: "http://127.0.0.1:9".into(), ..Settings::default() };
+    assert_eq!(advisor::copilot_bridge(&s), None);
+    assert!(advisor::backends(&s).is_empty());
+
+    write(&format!("{port}.json"), json!({ "port": port.parse::<u64>().unwrap(), "token": "tok", "pid": me, "ideName": "Visual Studio Code", "api": "anthropic-messages" }));
+    assert_eq!(advisor::copilot_bridge(&s), Some((base.clone(), "tok".into())));
+    let found = advisor::backends(&s);
+    let models: Vec<&str> = found.iter().map(|b| b.model.as_str()).collect();
+    assert_eq!(models, ["copilot/claude-sonnet-5", "copilot/gpt-5"]);
+    assert_eq!(found[0].label, "Copilot: claude-sonnet-5");
+    assert!(found.iter().all(|b| b.kind == "copilot" && b.remote));
+
+    // Turned off: not offered even with a live bridge.
+    assert!(advisor::backends(&Settings { copilot_enabled: false, ..s }).is_empty());
+    std::env::remove_var("AGENTICODE_CONFIG_DIR");
+}
+
+#[test]
+fn copilot_streams_through_the_bridge_like_anthropic() {
+    let (base, seen) = mock(vec![("/v1/messages", 200, ANTHROPIC_OK)]);
+    let s = copilot_at(&base, "tok");
+    let b = advisor::Backend { kind: "copilot".into(), model: "copilot/claude-sonnet-5".into(), label: "Copilot".into(), remote: true };
+    let stop = AtomicBool::new(false);
+    assert_eq!(collect(|f| advisor::stream(&s, &chat(), &b, &stop, f)).unwrap(), "ok");
+    let req = seen.lock().unwrap()[0].clone();
+    assert!(req.starts_with("POST /v1/messages | tok | "), "{req}");
+    let body: serde_json::Value = serde_json::from_str(req.splitn(3, " | ").nth(2).unwrap()).unwrap();
+    assert_eq!((body["system"].as_str(), body["model"].as_str(), body["stream"].as_bool()), (Some("be brief"), Some("copilot/claude-sonnet-5"), Some(true)));
+    assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_provider_checks_copilot() {
+    let (base, seen) = mock(vec![("/v1/models", 200, COPILOT_MODELS), ("/v1/messages", 200, ANTHROPIC_OK)]);
+    let r = advisor::test_provider(&copilot_at(&base, "tok"), "copilot");
+    assert!(r.ok, "{r:?}");
+    assert_eq!((r.model.as_str(), r.models), ("copilot/claude-sonnet-5", 2));
+    assert!(seen.lock().unwrap().iter().any(|l| l.contains("Reply with exactly: ok")));
+
+    let (base, _) = mock(vec![("/v1/models", 401, "{\"error\":{\"message\":\"bad token\"}}")]);
+    let r = advisor::test_provider(&copilot_at(&base, "nope"), "copilot");
+    let err = r.error.unwrap();
+    assert!(!r.ok && err.contains("Copilot rejected the API key (HTTP 401)") && err.contains("bad token"), "{err}");
+
+    let r = advisor::test_provider(&copilot_at("http://127.0.0.1:9", "tok"), "copilot");
+    assert!(r.error.unwrap().contains("Could not reach Copilot"));
+}
+
+#[test]
+fn test_provider_checks_ollama() {
+    let tags = "{\"models\":[{\"name\":\"big:latest\",\"size\":9000000000}]}";
+    let (base, _) = mock(vec![("/api/tags", 200, tags), ("/api/chat", 200, "{\"message\":{\"content\":\"ok\"},\"done\":true}\n")]);
+    let r = advisor::test_provider(&Settings { ollama_host: base, ..Settings::default() }, "ollama");
+    assert!(r.ok, "{r:?}");
+    assert_eq!((r.model.as_str(), r.models), ("big:latest", 1));
+
+    let r = advisor::test_provider(&Settings { ollama_host: "http://127.0.0.1:9".into(), ..Settings::default() }, "ollama");
+    assert!(!r.ok && r.error.unwrap().contains("Could not reach Ollama"));
+
+    let (base, _) = mock(vec![("/api/tags", 200, "{\"models\":[]}")]);
+    let r = advisor::test_provider(&Settings { ollama_host: base, ..Settings::default() }, "ollama");
+    assert!(r.error.unwrap().contains("no chat models"));
+}
+
+#[test]
+fn test_provider_checks_agenticwork_with_typed_values() {
+    let models = "{\"data\":[{\"id\":\"fast\"},{\"id\":\"auto\",\"model_type\":\"chat\"}]}";
+    let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+    let (base, seen) = mock(vec![("/v1/models", 200, models), ("/v1/chat/completions", 200, sse)]);
+    let api = Api::new();
+    // Values typed in the form are used without being saved.
+    let r = api.call("test_provider", &json!({ "kind": "agenticwork", "settings": { "agenticwork_url": base, "agenticwork_key": "awc_test" } })).unwrap();
+    assert_eq!((r["ok"].clone(), r["model"].clone(), r["models"].clone()), (json!(true), json!("auto"), json!(2)), "{r}");
+    assert!(seen.lock().unwrap().iter().any(|l| l.starts_with("POST /v1/chat/completions | Bearer awc_test")));
+    assert!(!r.to_string().contains("awc_test"));
+
+    let (bad, _) = mock(vec![("/v1/models", 403, "{\"message\":\"forbidden\"}")]);
+    let r = advisor::test_provider(&Settings { agenticwork_url: bad, agenticwork_key: "x".into(), ..Settings::default() }, "agenticwork");
+    assert!(r.error.unwrap().contains("AgenticWork rejected the API key (HTTP 403)"));
+    let r = advisor::test_provider(&Settings { agenticwork_url: "http://127.0.0.1:9".into(), agenticwork_key: "x".into(), ..Settings::default() }, "agenticwork");
+    assert!(r.error.unwrap().contains("Could not reach AgenticWork"));
+    assert!(advisor::test_provider(&Settings::default(), "agenticwork").error.unwrap().contains("first"));
 }
