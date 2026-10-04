@@ -36,6 +36,105 @@ interface, packaged with Tauri.
   storage better. It only produces text, and any command in an answer that
   would delete data is flagged.
 
+## Install
+
+There are two ways to run FrisyDisk: the desktop app (a window with the charts)
+and the terminal app, `frisy`. Both use the same fast scanner.
+
+### Desktop app
+
+Download the installer for your system from the
+[Releases](https://github.com/agentic-work/frisydisk/releases/latest) page:
+
+- **macOS** — the universal `.dmg`. Open it and drag **FrisyDisk** to
+  Applications. If the build is not notarised, the first launch is blocked by
+  Gatekeeper: right-click the app and choose **Open**, then **Open** again.
+- **Windows** — the `-setup.exe`. Run it and follow the installer. If the build
+  is unsigned, SmartScreen shows "Windows protected your PC": click **More
+  info**, then **Run anyway**.
+- **Linux** — no desktop package yet; use the terminal app below, or
+  [build from source](#build).
+
+### Terminal app (`frisy`)
+
+Installs into `~/.local/share/frisydisk` and links `~/.local/bin/frisy`.
+Nothing needs administrator rights.
+
+```sh
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.ps1 | iex
+```
+
+The install script picks the right build for your OS and CPU (macOS universal,
+Linux x64/arm64, Windows x64). On macOS and Linux, if `~/.local/bin` is not on
+your `PATH`, the script tells you the line to add. The interactive terminal view
+needs **Node.js 18 or newer**; without it, `frisy` still prints a plain-text
+summary.
+
+## Using the app
+
+Open FrisyDisk, then pick a volume or folder to scan (or pass one on the command
+line, below). The chart draws while the scan runs — you do not have to wait for
+it to finish.
+
+- **Views** — switch between **Sunburst**, **Treemap** and **Sankey** (which
+  opens only the largest folders). Click a slice to zoom into that folder; the
+  list, search, largest-files list and file-type breakdown all follow where you
+  are.
+- **Collector** — stage items you want gone, review the list, then move them to
+  the Trash (Recycle Bin on Windows) after a confirmation. Nothing leaves until
+  you confirm.
+- **Clean up** — review temp files, app caches, logs and unused developer build
+  folders by category, then choose **Move to Trash** or **Delete permanently**.
+- **Advisor** — ask a model for non-destructive ways to free space and improve
+  I/O (see [Advisor providers](#advisor-providers)). It only writes text, and
+  any command that would delete data is flagged.
+
+To open straight into a scan, add `--scan PATH` (and optionally `--mode sankey`,
+`--tab types`) to the app's command line, or `?scan=/path&mode=sankey&tab=types`
+in the dev server URL.
+
+On macOS, grant **Full Disk Access** (System Settings → Privacy & Security) to
+let the app see protected folders.
+
+## Using the terminal app
+
+`frisy` shows the same data in a terminal, on macOS, Linux and Windows
+(PowerShell or Command Prompt).
+
+```sh
+frisy ~              # explore a folder interactively
+frisy clean          # review temp files, caches, logs and unused build folders
+frisy du -c ~/*      # like `du -sch`, much faster
+frisy --print /      # largest items, as plain text (no interactive view)
+frisy --help         # all commands
+```
+
+`frisy --print` draws a bar for each child, biggest first:
+
+```text
+~/Downloads  292 MB in 10 files (0.0 s)
+███████████▏          55.4%    162 MB  Media/
+██████▎               31.3%   91.3 MB  Projects/
+█▋                     8.1%   23.6 MB  Downloads/
+▉                      4.2%   12.3 MB  Caches/
+▎                      1.1%   3.07 MB  Documents/
+```
+
+In the interactive view: **arrows** move, **enter** opens a folder,
+**backspace** goes up, **tab** switches view, **/** searches, **space** marks an
+item, **x** moves the marked items to the Trash, **c** opens clean up, and **q**
+quits. To reach folders only an administrator can read, run `frisy` with `sudo`
+(macOS/Linux) or from a PowerShell window opened **as Administrator** (Windows).
+
+On this author's Mac, `frisy du` totalled a 69 GB folder in about a minute where
+`du -sch` took six and a half.
+
 ### Advisor providers
 
 The Advisor tab appears only when there is a model to talk to. Under
@@ -57,35 +156,6 @@ one tiny request, then shows the model used, how many models it found and the
 round trip time, or the actual error. Keys are stored in `settings.json` in your user config
 folder (readable only by you on macOS and Linux) and are never sent to the
 interface.
-
-## Terminal app
-
-`frisy` shows the same thing in a terminal, on macOS, Linux and Windows
-(PowerShell or Command Prompt). It uses the same fast scanner as the app.
-
-```sh
-# macOS and Linux
-curl -fsSL https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.sh | sh
-```
-
-```powershell
-# Windows
-irm https://raw.githubusercontent.com/agentic-work/frisydisk/main/scripts/install.ps1 | iex
-```
-
-```sh
-frisy ~              # explore: arrows move, enter opens, backspace goes up, tab switches view
-frisy clean          # temp files, caches, logs and unused build folders
-frisy du -c ~/*      # like du -sch, much faster
-frisy --print /      # largest items, as plain text
-```
-
-The interactive view needs Node.js 18 or newer; without it `frisy` prints a
-summary. To see folders only an administrator can read, run it with `sudo`, or
-from PowerShell opened as Administrator.
-
-On this author's Mac, `frisy du` totalled a 69 GB folder in about a minute where
-`du -sch` took six and a half.
 
 ## Build
 
