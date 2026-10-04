@@ -1,7 +1,7 @@
 {
   "name": "frisydisk-cli",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "FrisyDisk in the terminal",
   "license": "MIT",
   "type": "module",
