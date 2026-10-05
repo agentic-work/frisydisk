@@ -21,6 +21,34 @@ pub struct Settings {
     /// Optional bridge address and token, for when the lockfile is elsewhere.
     pub copilot_url: String,
     pub copilot_token: String,
+
+    // ---- Appearance ----
+    /// "auto" follows the OS, or force "light" / "dark".
+    pub theme: String,
+    /// "decimal" (1 KB = 1000 B, the default) or "binary" (1 KiB = 1024 B).
+    pub units: String,
+
+    // ---- Scanning ----
+    /// How many folder levels the sunburst/chart draws. 1..=12.
+    pub scan_depth: u32,
+    /// Slices smaller than this fraction of the total are folded away. 0.0..=0.2.
+    pub scan_min_fraction: f64,
+
+    // ---- Cleanup ----
+    /// Default cleanup action offered: "trash" or "delete".
+    pub clean_mode: String,
+    /// A project's build folder counts as stale after this many days untouched. 1..=3650.
+    pub stale_days: u64,
+
+    // ---- I/O benchmark ----
+    pub bench_total_bytes: u64,
+    pub bench_block_bytes: u64,
+    pub bench_random_ops: u32,
+    pub bench_write: bool,
+
+    // ---- Advisor behaviour ----
+    /// Ask the advisor automatically as soon as a scan finishes.
+    pub auto_ask: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +63,17 @@ impl Default for Settings {
             copilot_enabled: true,
             copilot_url: String::new(),
             copilot_token: String::new(),
+            theme: "auto".into(),
+            units: "decimal".into(),
+            scan_depth: 6,
+            scan_min_fraction: 0.004,
+            clean_mode: "trash".into(),
+            stale_days: 90,
+            bench_total_bytes: 64 * 1024 * 1024,
+            bench_block_bytes: 1024 * 1024,
+            bench_random_ops: 1024,
+            bench_write: true,
+            auto_ask: false,
         }
     }
 }
@@ -113,6 +152,45 @@ impl Settings {
         if let Some(v) = text("copilot_token") {
             self.copilot_token = v;
         }
+        if let Some(v) = text("theme") {
+            if matches!(v.as_str(), "auto" | "light" | "dark") {
+                self.theme = v;
+            }
+        }
+        if let Some(v) = text("units") {
+            if matches!(v.as_str(), "decimal" | "binary") {
+                self.units = v;
+            }
+        }
+        if let Some(n) = change["scan_depth"].as_u64() {
+            self.scan_depth = (n as u32).clamp(1, 12);
+        }
+        if let Some(f) = change["scan_min_fraction"].as_f64() {
+            self.scan_min_fraction = f.clamp(0.0, 0.2);
+        }
+        if let Some(v) = text("clean_mode") {
+            if matches!(v.as_str(), "trash" | "delete") {
+                self.clean_mode = v;
+            }
+        }
+        if let Some(n) = change["stale_days"].as_u64() {
+            self.stale_days = n.clamp(1, 3650);
+        }
+        if let Some(n) = change["bench_total_bytes"].as_u64() {
+            self.bench_total_bytes = n.clamp(4 * 1024 * 1024, crate::benchmark::MAX_TOTAL);
+        }
+        if let Some(n) = change["bench_block_bytes"].as_u64() {
+            self.bench_block_bytes = n.clamp(4096, 64 * 1024 * 1024);
+        }
+        if let Some(n) = change["bench_random_ops"].as_u64() {
+            self.bench_random_ops = (n as u32).clamp(1, 100_000);
+        }
+        if let Some(b) = change["bench_write"].as_bool() {
+            self.bench_write = b;
+        }
+        if let Some(b) = change["auto_ask"].as_bool() {
+            self.auto_ask = b;
+        }
     }
 
     /// What the UI may see: never the keys themselves.
@@ -127,6 +205,17 @@ impl Settings {
             "copilot_enabled": self.copilot_enabled,
             "copilot_url": self.copilot_url,
             "has_copilot_token": !self.copilot_token.is_empty(),
+            "theme": self.theme,
+            "units": self.units,
+            "scan_depth": self.scan_depth,
+            "scan_min_fraction": self.scan_min_fraction,
+            "clean_mode": self.clean_mode,
+            "stale_days": self.stale_days,
+            "bench_total_bytes": self.bench_total_bytes,
+            "bench_block_bytes": self.bench_block_bytes,
+            "bench_random_ops": self.bench_random_ops,
+            "bench_write": self.bench_write,
+            "auto_ask": self.auto_ask,
             "file": path().to_string_lossy(),
         })
     }

@@ -1,12 +1,23 @@
 // Small helpers shared by the UI modules.
 
-/** Decimal units, matching the Rust side. */
+// Byte units: "decimal" (1 KB = 1000 B) or "binary" (1 KiB = 1024 B).
+// Set once from saved settings; every fmtBytes call then follows it.
+let unitMode = "decimal";
+export function setUnits(mode) {
+  unitMode = mode === "binary" ? "binary" : "decimal";
+}
+
+/** Format a byte count in the configured unit system. */
 export function fmtBytes(n) {
-  const units = ["bytes", "KB", "MB", "GB", "TB", "PB"];
+  const binary = unitMode === "binary";
+  const step = binary ? 1024 : 1000;
+  const units = binary
+    ? ["bytes", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    : ["bytes", "KB", "MB", "GB", "TB", "PB"];
   let v = n;
   let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
+  while (v >= step && i < units.length - 1) {
+    v /= step;
     i++;
   }
   if (i === 0) return `${n} bytes`;

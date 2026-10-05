@@ -3,7 +3,7 @@
 
 import { Chart, colorFor } from "./charts.js";
 import { prepare } from "./layout.js";
-import { escapeHtml, fmtBytes, fmtCount, markdown, plural } from "./util.js";
+import { escapeHtml, fmtBytes, fmtCount, markdown, plural, setUnits } from "./util.js";
 
 const T = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -39,6 +39,7 @@ const state = {
   searchRows: [],
   backends: null,
   backend: null,
+  config: null,
   advisor: { messages: [], running: false, error: null, risky: [], started: false },
 };
 
@@ -141,11 +142,15 @@ async function poll() {
 
 async function refresh(animate) {
   let res;
+  // The saved chart depth / smallest-slice settings are the base; the sankey and
+  // treemap modes tighten them so those layouts stay readable.
+  const baseDepth = state.config?.scan_depth ?? 6;
+  const baseMin = state.config?.scan_min_fraction ?? 0.004;
   try {
     res = await call("view", {
       focus: state.focus,
-      depth: state.mode === "sankey" ? 4 : 6,
-      min_fraction: state.mode === "treemap" ? 0.0015 : 0.0035,
+      depth: state.mode === "sankey" ? Math.min(baseDepth, 4) : baseDepth,
+      min_fraction: state.mode === "treemap" ? baseMin * 0.43 : baseMin,
     });
   } catch (e) {
     if (state.focus !== 0) {
@@ -560,6 +565,25 @@ async function refreshBackends() {
   return state.backends;
 }
 
+/** Apply saved settings that change the whole UI: theme and byte units. */
+function applyConfig(cfg) {
+  state.config = cfg;
+  setUnits(cfg.units);
+  const root = document.documentElement;
+  if (cfg.theme === "light" || cfg.theme === "dark") root.setAttribute("data-theme", cfg.theme);
+  else root.removeAttribute("data-theme");
+}
+
+/** Load settings once and apply them; falls back to defaults on error. */
+async function loadConfig() {
+  try {
+    applyConfig(await call("settings"));
+  } catch {
+    applyConfig({ units: "decimal", theme: "auto", auto_ask: false });
+  }
+  return state.config;
+}
+
 async function openSettings() {
   let cfg;
   try {
@@ -571,7 +595,8 @@ async function openSettings() {
   const remove = (has, field) => (has ? ` <a href="#" data-clear="${field}">Remove key</a>` : "");
   const actions = (kind) =>
     `<div class="provider-actions"><button data-save="${kind}">Save</button><button data-test="${kind}">Test</button><span class="provider-result" id="result-${kind}"></span></div>`;
-  const card = openModal(`<h2>Advisor settings</h2>
+  const card = openModal(`<h2>Settings</h2>
+    <h3 class="set-section">Advisor</h3>
     <p>The advisor needs a model to talk to. It appears only when one of these is available.</p>
     <label class="check"><input type="checkbox" id="set-enabled" ${cfg.advisor_enabled ? "checked" : ""}> Use the advisor</label>
     <div class="field"><label>GitHub Copilot</label>
@@ -598,6 +623,58 @@ async function openSettings() {
       <small>${saved(cfg.has_openai_key)}${remove(cfg.has_openai_key, "openai_key")}</small>
       ${actions("openai")}</div>
     <p class="note">With Copilot, AgenticWork, Anthropic, OpenAI or an Ollama server on another machine, the scan summary (folder and file names with sizes) is sent to that service when you ask for suggestions. Keys are stored on this computer in ${escapeHtml(cfg.file)}.</p>
+    <label class="check"><input type="checkbox" id="set-auto-ask" ${cfg.auto_ask ? "checked" : ""}> Ask the advisor automatically when a scan finishes</label>
+
+    <h3 class="set-section">Appearance</h3>
+    <div class="field-pair">
+      <div class="field"><label for="set-theme">Theme</label>
+        <select id="set-theme">
+          <option value="auto" ${cfg.theme === "auto" ? "selected" : ""}>Match the system</option>
+          <option value="light" ${cfg.theme === "light" ? "selected" : ""}>Light</option>
+          <option value="dark" ${cfg.theme === "dark" ? "selected" : ""}>Dark</option>
+        </select></div>
+      <div class="field"><label for="set-units">Size units</label>
+        <select id="set-units">
+          <option value="decimal" ${cfg.units === "decimal" ? "selected" : ""}>Decimal (1 KB = 1000 B)</option>
+          <option value="binary" ${cfg.units === "binary" ? "selected" : ""}>Binary (1 KiB = 1024 B)</option>
+        </select></div>
+    </div>
+
+    <h3 class="set-section">Scanning</h3>
+    <div class="field-pair">
+      <div class="field"><label for="set-depth">Chart depth</label>
+        <input type="number" id="set-depth" min="1" max="12" step="1" value="${cfg.scan_depth}">
+        <small>How many folder levels the chart draws (1–12).</small></div>
+      <div class="field"><label for="set-minfrac">Smallest slice shown</label>
+        <input type="number" id="set-minfrac" min="0" max="20" step="0.1" value="${(cfg.scan_min_fraction * 100).toFixed(1)}">
+        <small>Percent of the total below which slices are grouped (0–20%).</small></div>
+    </div>
+
+    <h3 class="set-section">Cleanup</h3>
+    <div class="field-pair">
+      <div class="field"><label for="set-cleanmode">Highlighted action</label>
+        <select id="set-cleanmode">
+          <option value="trash" ${cfg.clean_mode === "trash" ? "selected" : ""}>Move to ${trashName()}</option>
+          <option value="delete" ${cfg.clean_mode === "delete" ? "selected" : ""}>Delete permanently</option>
+        </select>
+        <small>Permanent deletion always needs a second confirmation.</small></div>
+      <div class="field"><label for="set-stale">Build folders stale after</label>
+        <input type="number" id="set-stale" min="1" max="3650" step="1" value="${cfg.stale_days}">
+        <small>Days a project can go untouched before its build folder is offered (1–3650).</small></div>
+    </div>
+
+    <h3 class="set-section">I/O benchmark</h3>
+    <div class="field-pair">
+      <div class="field"><label for="set-bench-total">Test size (MB)</label>
+        <input type="number" id="set-bench-total" min="4" max="512" step="4" value="${Math.round(cfg.bench_total_bytes / (1024 * 1024))}">
+        <small>How much data to read/write (4–512 MB).</small></div>
+      <div class="field"><label for="set-bench-ops">Random operations</label>
+        <input type="number" id="set-bench-ops" min="1" max="100000" step="1" value="${cfg.bench_random_ops}">
+        <small>Random reads used to measure IOPS and latency.</small></div>
+    </div>
+    <label class="check"><input type="checkbox" id="set-bench-write" ${cfg.bench_write ? "checked" : ""}> Include a write test by default</label>
+
+    <div class="provider-actions" style="margin-top:14px"><button class="primary" id="set-save-app">Save settings</button><span class="provider-result" id="result-app"></span></div>
     <div class="found" id="set-found"></div>
     <div class="modal-actions"><button id="set-cancel">Close</button></div>`);
   const found = card.querySelector("#set-found");
@@ -636,6 +713,33 @@ async function openSettings() {
     return change;
   };
   card.querySelector("#set-cancel").onclick = closeModal;
+  card.querySelector("#set-save-app").onclick = async () => {
+    const result = card.querySelector("#result-app");
+    const num = (id) => Number(card.querySelector("#" + id).value);
+    result.textContent = "Saving…";
+    try {
+      const shown = await call("set_settings", {
+        advisor_enabled: card.querySelector("#set-enabled").checked,
+        auto_ask: card.querySelector("#set-auto-ask").checked,
+        theme: card.querySelector("#set-theme").value,
+        units: card.querySelector("#set-units").value,
+        scan_depth: num("set-depth"),
+        scan_min_fraction: num("set-minfrac") / 100,
+        clean_mode: card.querySelector("#set-cleanmode").value,
+        stale_days: num("set-stale"),
+        bench_total_bytes: Math.round(num("set-bench-total")) * 1024 * 1024,
+        bench_random_ops: Math.round(num("set-bench-ops")),
+        bench_write: card.querySelector("#set-bench-write").checked,
+      });
+      applyConfig(shown);
+      result.textContent = "Saved.";
+      if (state.view) {
+        refresh(false);
+      }
+    } catch (e) {
+      result.textContent = e.message;
+    }
+  };
   for (const btn of card.querySelectorAll("[data-save]")) {
     const kind = btn.dataset.save;
     btn.onclick = async () => {
@@ -702,7 +806,7 @@ function renderAdvisor() {
       <ul><li>Suggestions only. Nothing is moved, changed or deleted.</li>${where}</ul>
       <div class="io-test">
         <button id="io-run">Test I/O speed</button>
-        <label class="io-write"><input type="checkbox" id="io-write"> include write test</label>
+        <label class="io-write"><input type="checkbox" id="io-write" ${state.config?.bench_write ? "checked" : ""}> include write test</label>
         <span id="io-result" class="io-result"></span>
       </div>
       <p><button class="primary" id="advisor-ask" ${state.scanning || !b ? "disabled" : ""}>${
@@ -795,7 +899,7 @@ async function openClean() {
   const card = openModal(`<h2>Clean up</h2><p>Measuring temporary files, caches and logs…</p>`);
   let r;
   try {
-    r = await call("clean_scan", { stale_days: 90 });
+    r = await call("clean_scan", {});
   } catch (e) {
     card.innerHTML = `<h2>Clean up</h2><p>${escapeHtml(e.message)}</p><div class="modal-actions"><button class="primary" id="clean-close">Close</button></div>`;
     card.querySelector("#clean-close").onclick = closeModal;
@@ -817,7 +921,7 @@ async function openClean() {
         )
         .join("") || `<p class="list-note">Nothing to clean right now.</p>`
     }</div>
-    ${!r.scan_open ? `<p class="note">Scan your home folder first to also find build folders (node_modules, target) in projects untouched for 90 days.</p>` : ""}
+    ${!r.scan_open ? `<p class="note">Scan your home folder first to also find build folders (node_modules, target) in projects untouched for ${plural(state.config?.stale_days ?? 90, "day")}.</p>` : ""}
     ${admin && state.platform === "windows" ? `<p class="note"><button id="clean-elevate">Restart as administrator</button> to include system temp files and Windows Update downloads.</p>` : ""}
     <p class="note" id="clean-sum"></p>
     <div class="modal-actions"><button id="clean-cancel">Cancel</button>
@@ -838,6 +942,10 @@ async function openClean() {
     card.querySelector("#clean-cancel").onclick = closeModal;
     card.querySelector("#clean-trash").onclick = () => run("trash");
     card.querySelector("#clean-delete").onclick = askDelete;
+    // The saved default decides which action is highlighted; permanent delete
+    // still takes its own explicit second click, whichever is highlighted.
+    const prefer = state.config?.clean_mode === "delete" ? "#clean-delete" : "#clean-trash";
+    card.querySelector(prefer)?.classList.add("primary");
   };
   const elevate = card.querySelector("#clean-elevate");
   if (elevate) elevate.onclick = relaunchAsAdmin;
@@ -984,6 +1092,7 @@ async function init() {
     state.platform = await call("platform");
     state.elevated = await call("elevated");
   } catch {}
+  await loadConfig();
 
   // Scripted runs: launch arguments in the app, query parameters in a browser.
   let opts = Object.fromEntries(new URLSearchParams(location.search));
@@ -996,6 +1105,19 @@ async function init() {
       if (ev.payload.type === "drop" && ev.payload.paths?.length) startScan(ev.payload.paths[0]);
     });
   }
+
+  // Ask the advisor automatically when a scan finishes, if the user turned that
+  // on. An explicit `--advise` launch has its own one-shot handler below, so
+  // skip this one then to avoid asking twice.
+  if (!("advise" in opts)) {
+    window.addEventListener("frisy-scan-done", async () => {
+      if (!state.config?.auto_ask || state.advisor.started) return;
+      if (!(state.backends || (await refreshBackends())).length) return;
+      setTab("advisor");
+      askAdvisor(null);
+    });
+  }
+
   const ready = refreshBackends();
   if (["sunburst", "treemap", "sankey"].includes(opts.mode)) state.mode = opts.mode;
   if (["contents", "largest", "types"].includes(opts.tab)) state.tab = opts.tab;

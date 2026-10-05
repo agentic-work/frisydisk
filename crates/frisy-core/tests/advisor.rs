@@ -7,6 +7,9 @@ use serde_json::json;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+/// Both config tests set the shared FRISYDISK_CONFIG_DIR env var; serialise them.
+static CONFIG_ENV: Mutex<()> = Mutex::new(());
+
 /// Serves canned responses and records each request as "METHOD url | auth | body".
 fn mock(routes: Vec<(&'static str, u16, &'static str)>) -> (String, Arc<Mutex<Vec<String>>>) {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
@@ -133,6 +136,7 @@ fn backends_follow_the_settings() {
 
 #[test]
 fn settings_are_saved_privately_and_keys_never_reach_the_ui() {
+    let _guard = CONFIG_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("FRISYDISK_CONFIG_DIR", dir.path());
     assert_eq!(Settings::load(), Settings::default());
@@ -167,6 +171,47 @@ fn settings_are_saved_privately_and_keys_never_reach_the_ui() {
 
     assert!(settings::is_local("http://127.0.0.1:11434") && settings::is_local("http://localhost:1"));
     assert!(!settings::is_local("http://nas.local:11434") && !settings::is_local("https://api.example.com"));
+}
+
+#[test]
+fn app_settings_persist_clamp_and_reject_bad_values() {
+    let _guard = CONFIG_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    std::env::set_var("FRISYDISK_CONFIG_DIR", dir.path());
+    let api = Api::new();
+
+    // Good values round-trip and reach public().
+    let shown = api
+        .call("set_settings", &json!({
+            "theme": "dark", "units": "binary", "scan_depth": 4, "scan_min_fraction": 0.02,
+            "clean_mode": "delete", "stale_days": 30, "bench_total_bytes": 32 * 1024 * 1024,
+            "bench_block_bytes": 65536, "bench_random_ops": 2048, "bench_write": false, "auto_ask": true
+        }))
+        .unwrap();
+    assert_eq!(shown["theme"], "dark");
+    assert_eq!(shown["units"], "binary");
+    assert_eq!(shown["scan_depth"], 4);
+    assert_eq!(shown["clean_mode"], "delete");
+    assert_eq!(shown["stale_days"], 30);
+    assert_eq!(shown["bench_write"], false);
+    assert_eq!(shown["auto_ask"], true);
+    assert_eq!(Settings::load().theme, "dark");
+
+    // Out-of-range numbers are clamped, not accepted raw.
+    let shown = api
+        .call("set_settings", &json!({ "scan_depth": 99, "stale_days": 100000, "scan_min_fraction": 5.0, "bench_total_bytes": 1, "bench_random_ops": 0 }))
+        .unwrap();
+    assert_eq!(shown["scan_depth"], 12);
+    assert_eq!(shown["stale_days"], 3650);
+    assert_eq!(shown["scan_min_fraction"], 0.2);
+    assert_eq!(shown["bench_total_bytes"], 4 * 1024 * 1024);
+    assert_eq!(shown["bench_random_ops"], 1);
+
+    // Invalid enum strings are ignored, keeping the previous value.
+    let shown = api.call("set_settings", &json!({ "theme": "neon", "units": "furlongs", "clean_mode": "nuke" })).unwrap();
+    assert_eq!(shown["theme"], "dark");
+    assert_eq!(shown["units"], "binary");
+    assert_eq!(shown["clean_mode"], "delete");
 }
 
 const COPILOT_MODELS: &str = "{\"data\":[{\"id\":\"copilot/gpt-5\",\"display_name\":\"GPT-5\"},{\"id\":\"copilot/claude-sonnet-5\",\"display_name\":\"Claude Sonnet 5\"},{\"id\":\"other/model\"}]}";

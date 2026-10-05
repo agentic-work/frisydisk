@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { hitSunburst, hitTreemap, prepare, sankey, squarify, sunburst, sunburstGeometry, treemap } from "./layout.js";
-import { fmtBytes, markdown } from "./util.js";
+import { fmtBytes, markdown, setUnits } from "./util.js";
 
 const file = (id, name, size) => ({ id, name, size, files: 1, dir: false, group: 0, children: [] });
 
@@ -100,6 +100,23 @@ test("formatting and markdown escape their input", () => {
   assert.ok(html.includes("<h3>Title</h3>") && html.includes("<strong>bold</strong>"));
   assert.ok(html.includes("<code>rm &lt;x&gt;</code>") && html.includes("a &lt; b"));
   assert.ok(html.includes("<pre") && !html.includes("<script>"));
+});
+
+test("fmtBytes follows the unit mode and reverts to decimal", () => {
+  try {
+    setUnits("binary");
+    assert.equal(fmtBytes(1024), "1.00 KiB");
+    assert.equal(fmtBytes(1_073_741_824), "1.00 GiB");
+    assert.equal(fmtBytes(500), "500 bytes");
+    setUnits("decimal");
+    assert.equal(fmtBytes(1000), "1.00 KB");
+    assert.equal(fmtBytes(1_000_000_000), "1.00 GB");
+    // An unknown mode falls back to decimal rather than throwing.
+    setUnits("furlongs");
+    assert.equal(fmtBytes(1000), "1.00 KB");
+  } finally {
+    setUnits("decimal");
+  }
 });
 
 test("markdown renders tables", () => {

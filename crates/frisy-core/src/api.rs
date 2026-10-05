@@ -126,8 +126,12 @@ impl Api {
             // Everything a screen needs in one round trip.
             "view" => {
                 let focus = id_arg(args, "focus")?;
-                let depth = args["depth"].as_u64().unwrap_or(6) as u32;
-                let min = args["min_fraction"].as_f64().unwrap_or(0.004);
+                let (cfg_depth, cfg_min) = {
+                    let s = self.settings.lock().unwrap();
+                    (s.scan_depth, s.scan_min_fraction)
+                };
+                let depth = args["depth"].as_u64().map(|v| v as u32).unwrap_or(cfg_depth);
+                let min = args["min_fraction"].as_f64().unwrap_or(cfg_min);
                 let limit = args["rows"].as_u64().unwrap_or(500) as usize;
                 let scan = self.scan()?;
                 let tree = scan.tree.lock().unwrap();
@@ -264,7 +268,7 @@ impl Api {
                     let handles: Vec<_> = targets.iter().map(|t| s.spawn(move || clean::measure(t))).collect();
                     handles.into_iter().filter_map(|h| h.join().ok()).collect()
                 });
-                let days = args["stale_days"].as_u64().unwrap_or(90);
+                let days = args["stale_days"].as_u64().unwrap_or_else(|| self.settings.lock().unwrap().stale_days);
                 if let Some(scan) = self.scan.lock().unwrap().clone().filter(|s| s.is_finished()) {
                     let tree = scan.tree.lock().unwrap();
                     found.push(clean::stale_build_folders(&tree, days));
@@ -312,12 +316,12 @@ impl Api {
             }
             "benchmark" => {
                 let path = args["path"].as_str().ok_or("missing `path`")?;
-                let def = BenchOptions::default();
+                let cfg = self.settings.lock().unwrap().clone();
                 let opts = BenchOptions {
-                    total_bytes: args["total_bytes"].as_u64().unwrap_or(def.total_bytes),
-                    block_bytes: args["block_bytes"].as_u64().unwrap_or(def.block_bytes),
-                    random_ops: args["random_ops"].as_u64().map(|n| n as u32).unwrap_or(def.random_ops),
-                    write: args["write"].as_bool().unwrap_or(def.write),
+                    total_bytes: args["total_bytes"].as_u64().unwrap_or(cfg.bench_total_bytes),
+                    block_bytes: args["block_bytes"].as_u64().unwrap_or(cfg.bench_block_bytes),
+                    random_ops: args["random_ops"].as_u64().map(|n| n as u32).unwrap_or(cfg.bench_random_ops),
+                    write: args["write"].as_bool().unwrap_or(cfg.bench_write),
                 };
                 let result = benchmark::run(std::path::Path::new(path), &opts)?;
                 // Keep a plain-text version for the advisor to reason over.

@@ -30,6 +30,33 @@
   }
 }
 
+/* A manual theme choice overrides the OS setting. */
+:root[data-theme="dark"] {
+  --is-dark: 1;
+  --bg: #14202b;
+  --stage: #0f1922;
+  --panel: #1a2937;
+  --raise: #24374a;
+  --line: rgba(238, 242, 236, 0.1);
+  --text: #eef2ec;
+  --dim: #9fb0bd;
+  --focus: #7cc4ff;
+  --warn: #ff8f6b;
+}
+
+:root[data-theme="light"] {
+  --is-dark: 0;
+  --bg: #eef2ee;
+  --stage: #e4eae6;
+  --panel: #fbfcfa;
+  --raise: #e3eae5;
+  --line: rgba(20, 32, 43, 0.13);
+  --text: #14202b;
+  --dim: #586877;
+  --focus: #1f6fd0;
+  --warn: #c2410c;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -74,7 +101,7 @@ button.warn { background: var(--warn); color: #1d0b04; border-color: transparent
   outline-offset: 2px;
 }
 
-input[type="text"], input[type="search"], select {
+input[type="text"], input[type="search"], input[type="number"], select {
   background: var(--stage);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -183,6 +210,8 @@ input[type="text"], input[type="search"], select {
 .field small { color: var(--dim); }
 .field input[type="text"], .field input[type="password"] { width: 100%; background: var(--stage); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.set-section { margin: 20px 0 4px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 15px; }
+.set-section:first-of-type { border-top: none; padding-top: 0; }
 .provider-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .provider-result { font-size: 12px; color: var(--muted, inherit); overflow-wrap: anywhere; }
 .check { display: flex; gap: 8px; align-items: center; font-weight: 600; }

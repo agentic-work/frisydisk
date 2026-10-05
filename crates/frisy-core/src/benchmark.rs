@@ -50,7 +50,8 @@ impl Drop for Scratch {
     }
 }
 
-const MAX_TOTAL: u64 = 512 * 1024 * 1024;
+/// The largest benchmark size allowed, so a scratch file never fills a disk.
+pub const MAX_TOTAL: u64 = 512 * 1024 * 1024;
 
 pub fn run(dir: &Path, opts: &BenchOptions) -> Result<BenchResult, String> {
     if !dir.is_dir() {
