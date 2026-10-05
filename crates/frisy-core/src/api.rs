@@ -3,6 +3,7 @@
 //! development server expose exactly the same behaviour.
 
 use crate::advisor::{self, Advisor, Backend};
+use crate::benchmark::{self, BenchOptions};
 use crate::clean::{self, Found, Mode, Places};
 use crate::hidden::{self, Hidden};
 use crate::facts;
@@ -23,6 +24,8 @@ pub struct Api {
     hidden: Mutex<Option<Option<Hidden>>>,
     /// The last cleanup measurement; `clean_run` only removes what it lists.
     cleanup: Mutex<Vec<Found>>,
+    /// The most recent I/O benchmark report, folded into the advisor's facts.
+    benchmark: Mutex<Option<String>>,
 }
 
 impl Default for Api {
@@ -34,6 +37,7 @@ impl Default for Api {
             settings: Mutex::new(Settings::load()),
             hidden: Mutex::new(None),
             cleanup: Mutex::new(Vec::new()),
+            benchmark: Mutex::new(None),
         }
     }
 }
@@ -306,17 +310,47 @@ impl Api {
                 settings.apply(&args["settings"]);
                 Ok(to_json(&advisor::test_provider(&settings, &kind)))
             }
+            "benchmark" => {
+                let path = args["path"].as_str().ok_or("missing `path`")?;
+                let def = BenchOptions::default();
+                let opts = BenchOptions {
+                    total_bytes: args["total_bytes"].as_u64().unwrap_or(def.total_bytes),
+                    block_bytes: args["block_bytes"].as_u64().unwrap_or(def.block_bytes),
+                    random_ops: args["random_ops"].as_u64().map(|n| n as u32).unwrap_or(def.random_ops),
+                    write: args["write"].as_bool().unwrap_or(def.write),
+                };
+                let result = benchmark::run(std::path::Path::new(path), &opts)?;
+                // Keep a plain-text version for the advisor to reason over.
+                let mut text = format!(
+                    "## I/O benchmark of {}\nSequential read: {:.0} MB/s",
+                    result.path, result.read_mbps
+                );
+                if let Some(w) = result.write_mbps {
+                    text.push_str(&format!(", sequential write: {w:.0} MB/s"));
+                }
+                text.push_str(&format!(
+                    ".\nRandom read: {:.0} IOPS at {:.0} us mean latency.\nLikely profile: {}.",
+                    result.random_iops, result.random_latency_us, benchmark::classify(&result)
+                ));
+                *self.benchmark.lock().unwrap() = Some(text);
+                Ok(to_json(&result))
+            }
             "advisor_ask" => {
                 let backend: Backend = serde_json::from_value(args["backend"].clone()).map_err(|_| "Pick a model first.")?;
                 let follow_up = args["follow_up"].as_str().map(String::from);
                 let scan = self.scan.lock().unwrap().clone();
                 let focus = args["focus"].as_u64().unwrap_or(0) as NodeId;
                 let settings = self.settings.lock().unwrap().clone();
+                let bench = self.benchmark.lock().unwrap().clone();
                 if !settings.advisor_enabled {
                     return Err("The advisor is turned off in settings.".into());
                 }
                 self.advisor.ask(settings, backend, follow_up, move || {
-                    let machine = facts::machine_report();
+                    let mut machine = facts::machine_report();
+                    if let Some(b) = bench {
+                        machine.push_str("\n\n");
+                        machine.push_str(&b);
+                    }
                     let report = scan.filter(|s| s.is_finished()).and_then(|s| {
                         let tree = s.tree.lock().unwrap();
                         tree.get(focus).map(|_| facts::scan_report(&tree, focus))

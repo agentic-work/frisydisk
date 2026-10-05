@@ -700,11 +700,18 @@ function renderAdvisor() {
     body.innerHTML = `<div class="advisor-intro"><h2>Storage advisor</h2>
       <p>Sends this scan and a summary of your volumes, network shares and system disk to the model you pick above, and asks for ways to speed up I/O and make better use of the storage you already have.</p>
       <ul><li>Suggestions only. Nothing is moved, changed or deleted.</li>${where}</ul>
+      <div class="io-test">
+        <button id="io-run">Test I/O speed</button>
+        <label class="io-write"><input type="checkbox" id="io-write"> include write test</label>
+        <span id="io-result" class="io-result"></span>
+      </div>
       <p><button class="primary" id="advisor-ask" ${state.scanning || !b ? "disabled" : ""}>${
         state.scanning ? "Ready when the scan finishes" : "Ask for suggestions"
       }</button></p></div>`;
     const ask = $("advisor-ask");
     if (ask) ask.onclick = () => askAdvisor(null);
+    const io = $("io-run");
+    if (io) io.onclick = () => runIoTest();
     return;
   }
   const pinned = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
@@ -730,6 +737,27 @@ async function askAdvisor(followUp) {
     pollAdvisor();
   } catch (e) {
     fail(e);
+  }
+}
+
+async function runIoTest() {
+  const btn = $("io-run");
+  const out = $("io-result");
+  const write = $("io-write")?.checked ?? false;
+  if (!btn || !out) return;
+  btn.disabled = true;
+  out.textContent = write ? "Testing read and write…" : "Testing…";
+  try {
+    const home = await call("home");
+    const r = await call("benchmark", { path: home, write });
+    const parts = [`read ${Math.round(r.read_mbps)} MB/s`];
+    if (r.write_mbps != null) parts.push(`write ${Math.round(r.write_mbps)} MB/s`);
+    parts.push(`${Math.round(r.random_iops)} IOPS`, `${Math.round(r.random_latency_us)} µs latency`);
+    out.textContent = parts.join(" · ") + " — included in the next question.";
+  } catch (e) {
+    out.textContent = `Failed: ${e.message}`;
+  } finally {
+    btn.disabled = false;
   }
 }
 

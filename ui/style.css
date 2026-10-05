@@ -411,9 +411,24 @@ input[type="text"], input[type="search"], select {
 .advisor-body ul, .advisor-body ol { margin: 6px 0; padding-left: 20px; }
 .advisor-body code { font: 12px var(--mono); background: var(--raise); padding: 1px 4px; border-radius: 4px; }
 .advisor-body pre { font: 12px/1.5 var(--mono); background: var(--stage); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.advisor-body pre.hl { position: relative; }
+.advisor-body pre.hl[data-lang]::before { content: attr(data-lang); position: absolute; top: 6px; right: 8px; font: 10px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.advisor-body .tok-kw { color: var(--accent); font-weight: 600; }
+.advisor-body .tok-str { color: #7fb96a; }
+.advisor-body .tok-num { color: #d19a66; }
+.advisor-body .tok-com { color: var(--dim); font-style: italic; }
+.advisor-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.advisor-body table { border-collapse: collapse; margin: 10px 0; font-size: 13px; width: 100%; }
+.advisor-body th, .advisor-body td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+.advisor-body thead th { background: var(--raise); font-weight: 600; }
+.advisor-body tbody tr:nth-child(even) { background: color-mix(in oklch, var(--line) 30%, transparent); }
+.advisor-body svg { max-width: 100%; height: auto; margin: 8px 0; }
 .advisor-body hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
 .advisor-intro h2 { margin-top: 0; font-size: 19px; }
 .advisor-intro li { margin: 4px 0; color: var(--dim); }
+.io-test { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+.io-test .io-write { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--dim); }
+.io-result { font: 12px var(--mono); color: var(--dim); flex-basis: 100%; }
 .question { background: color-mix(in oklch, var(--accent) 16%, transparent); border-radius: 10px; padding: 8px 10px; margin: 12px 0 12px 15%; }
 .risky { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 12px; margin: 12px 0; color: var(--warn); }
 .risky code { display: block; background: none; padding: 2px 0; color: inherit; }

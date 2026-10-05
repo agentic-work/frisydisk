@@ -98,6 +98,46 @@ test("formatting and markdown escape their input", () => {
   assert.equal(fmtBytes(999), "999 bytes");
   const html = markdown("## Title\n- **bold** `rm <x>`\n\n```\na < b\n```\n<script>alert(1)</script>");
   assert.ok(html.includes("<h3>Title</h3>") && html.includes("<strong>bold</strong>"));
-  assert.ok(html.includes("<code>rm &lt;x&gt;</code>") && html.includes("<pre>a &lt; b</pre>"));
-  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("<code>rm &lt;x&gt;</code>") && html.includes("a &lt; b"));
+  assert.ok(html.includes("<pre") && !html.includes("<script>"));
+});
+
+test("markdown renders tables", () => {
+  const html = markdown("| A | B |\n| --- | --- |\n| 1 | **two** |\n| 3 | 4 |");
+  assert.ok(html.includes("<table>") && html.includes("<thead>") && html.includes("<tbody>"));
+  assert.ok(html.includes("<th>A</th>") && html.includes("<th>B</th>"));
+  assert.ok(html.includes("<td>1</td>") && html.includes("<td><strong>two</strong></td>"));
+});
+
+test("markdown renders safe links and rejects dangerous schemes", () => {
+  const ok = markdown("see [the docs](https://example.com/a?b=1) and [mail](mailto:x@y.z)");
+  assert.ok(ok.includes('<a href="https://example.com/a?b=1" rel="noopener noreferrer" target="_blank">the docs</a>'));
+  assert.ok(ok.includes('<a href="mailto:x@y.z"'));
+  // javascript:, data:, vbscript: links keep the text but never become an href.
+  const bad = markdown("[click](javascript:alert(1)) [img](data:text/html,<script>1</script>)");
+  assert.ok(!bad.toLowerCase().includes("href=\"javascript:") && !bad.toLowerCase().includes("href=\"data:"));
+  assert.ok(bad.includes("click") && !bad.includes("<script>"));
+});
+
+test("fenced code blocks are highlighted by language without unescaping", () => {
+  const html = markdown("```js\nconst x = 1; // hi\n```");
+  assert.ok(html.includes('<pre class="hl" data-lang="js">') || html.includes('class="hl"'));
+  // Highlight wraps tokens in spans but the actual code text stays escaped.
+  assert.ok(html.includes("<span") && html.includes("const"));
+  const xss = markdown("```js\nvar s = \"</pre><script>alert(1)</script>\";\n```");
+  assert.ok(!xss.includes("<script>") && xss.includes("&lt;script&gt;"));
+});
+
+test("inline html/svg is sanitized to an allow-list", () => {
+  // A plain safe SVG survives.
+  const svg = markdown('<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" fill="#4af"></rect></svg>');
+  assert.ok(svg.includes("<svg") && svg.includes("<rect") && svg.includes('fill="#4af"'));
+  // Scripts, event handlers, foreignObject and javascript: urls are stripped.
+  const evil = markdown('<svg onload="alert(1)"><script>alert(2)</script><a href="javascript:alert(3)">x</a><foreignObject><img src=x onerror="alert(4)"></foreignObject></svg>');
+  assert.ok(evil.includes("<svg"));
+  assert.ok(!evil.includes("onload") && !/<script/i.test(evil) && !evil.includes("foreignObject"));
+  assert.ok(!/\bon\w+=/i.test(evil) && !evil.toLowerCase().includes("javascript:"));
+  // Unknown/unsafe tags are dropped entirely.
+  const iframe = markdown('<iframe src="https://evil.example"></iframe><b>keep</b>');
+  assert.ok(!iframe.includes("<iframe") && iframe.includes("<b>keep</b>"));
 });

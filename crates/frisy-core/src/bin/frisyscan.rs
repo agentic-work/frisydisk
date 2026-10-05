@@ -28,9 +28,22 @@ fn main() {
     let port: u16 = option("--port").and_then(|v| v.parse().ok()).unwrap_or(7878);
     let ui = option("--ui").unwrap_or_else(|| "ui".into());
     let show_facts = option("--facts").is_some();
+    let iobench = option("--iobench");
 
     if show_facts {
         println!("{}", facts::machine_report());
+        return;
+    }
+    if let Some(dir) = iobench {
+        let dir = if dir.is_empty() { ".".to_string() } else { dir };
+        let opts = frisy_core::benchmark::BenchOptions::default();
+        match frisy_core::benchmark::report(std::path::Path::new(&dir), &opts) {
+            Ok(text) => println!("{text}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         return;
     }
     match args.first().map(String::as_str) {

@@ -1,6 +1,7 @@
 //! Scanner, analysis and storage advisor behind FrisyDisk.
 
 pub mod advisor;
+pub mod benchmark;
 pub mod clean;
 pub mod api;
 pub mod facts;
