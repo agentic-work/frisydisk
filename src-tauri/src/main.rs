@@ -3,6 +3,8 @@
 
 use frisy_core::api::Api;
 use serde_json::Value;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 
 /// The whole interface: the UI sends a command name and JSON arguments.
 /// Runs off the main thread so a long call never freezes the window.
@@ -69,10 +71,39 @@ fn launch_args() -> Vec<String> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    // On macOS, closing the window the normal way (the red traffic-light button, not
+    // Cmd+Q) must not throw away the warm scan cache living in this process — that
+    // defeats the whole point of keeping scans warm. Hide instead of closing, and
+    // bring the same window back (same process, same cache) when the Dock icon is
+    // clicked or the app is reopened — that is a separate "Reopen" event on macOS,
+    // not something hiding the window gets for free. The app menu's own Quit item
+    // (Cmd+Q) is yet another event path and still really quits. Windows has no Dock
+    // to bring a hidden window back from without also adding a tray icon, so this is
+    // left at the previous "close really quits" behaviour there for now rather than
+    // stranding people with a window they can't get back.
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Api::new())
         .invoke_handler(tauri::generate_handler![api, launch_args, relaunch_as_admin])
-        .run(tauri::generate_context!())
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
+        .build(tauri::generate_context!())
         .expect("FrisyDisk could not start");
+
+    app.run(|_app_handle, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            if let Some(w) = _app_handle.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }
+    });
 }

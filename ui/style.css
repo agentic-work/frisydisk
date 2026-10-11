@@ -518,6 +518,19 @@ input[type="text"], input[type="search"], input[type="number"], select {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
+/* One stable size regardless of which sections are open or how much is typed into
+   them, instead of growing/shrinking with content. Still shrinks to fit a small
+   window rather than ever being clipped by it, and everything inside stays
+   reachable by scrolling the card itself. min-height: 0 overrides the default
+   "never shrink below my content" sizing a grid item gets from its parent's
+   place-items: center, which is what would otherwise defeat the scroll. */
+.modal-card.modal-card--fixed {
+  width: min(580px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 64px));
+  max-height: none;
+  min-height: 0;
+}
+
 .modal-card h2 { margin: 0 0 8px; font-size: 18px; }
 .modal-card p { margin: 0 0 14px; color: var(--dim); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

@@ -62,12 +62,18 @@ function fail(e) {
   toast(e?.message || String(e));
 }
 
-function openModal(html) {
+/** `fixed: true` gives the dialog one stable size (scrolls internally) instead of
+ * growing and shrinking with its own content — for the longer panels (Settings),
+ * where that content changes as you open sections or type. Short confirm-style
+ * dialogs stay sized to their content, which still looks right for them. */
+function openModal(html, { fixed = false } = {}) {
   const modal = $("modal");
-  modal.firstElementChild.innerHTML = html;
+  const card = modal.firstElementChild;
+  card.className = fixed ? "modal-card modal-card--fixed" : "modal-card";
+  card.innerHTML = html;
   modal.hidden = false;
-  modal.querySelector("button.primary, button.warn, button")?.focus();
-  return modal.firstElementChild;
+  card.querySelector("button.primary, button.warn, button")?.focus();
+  return card;
 }
 
 function closeModal() {
@@ -686,7 +692,7 @@ async function openSettings() {
 
     <div class="provider-actions" style="margin-top:14px"><button class="primary" id="set-save-app">Save settings</button><span class="provider-result" id="result-app"></span></div>
     <div class="found" id="set-found"></div>
-    <div class="modal-actions"><button id="set-cancel">Close</button></div>`);
+    <div class="modal-actions"><button id="set-cancel">Close</button></div>`, { fixed: true });
   const found = card.querySelector("#set-found");
   const describe = (list) => {
     if (!card.querySelector("#set-enabled").checked) return "The advisor is off.";
