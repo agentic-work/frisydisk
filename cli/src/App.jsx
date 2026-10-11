@@ -89,10 +89,12 @@ function Browse({ rpc, path, cols, height, platform, setMessage, quit, openClean
   const spin = useSpinner(scanning);
   const timer = useRef(null);
 
-  // Start (or restart) the scan.
+  // Start (or restart) the scan. Each run of the CLI is its own process with
+  // its own empty warm cache, and the 'r' key below must always rescan for
+  // real, so this always forces rather than ever reopening a stale copy.
   useEffect(() => {
     let live = true;
-    rpc.call("start_scan", { path }).then(
+    rpc.call("start_scan", { path, force: true }).then(
       () => live && setStarted((n) => n + 1),
       (e) => {
         setMessage({ error: true, text: e.message });

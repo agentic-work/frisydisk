@@ -131,6 +131,12 @@ impl Scan {
         self.finished.load(Ordering::SeqCst)
     }
 
+    /// Roughly how long ago this scan was started, for a "scanned X ago" badge.
+    /// Good enough for that purpose without keeping a separate finish time.
+    pub fn age_seconds(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
         self.wake.notify_all();

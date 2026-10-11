@@ -32,6 +32,17 @@ export function plural(n, word) {
   return `${fmtCount(n)} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/** "3m ago" style duration, for how long since a warm scan was started. */
+export function fmtAgo(seconds) {
+  if (seconds < 5) return "just now";
+  if (seconds < 90) return `${Math.round(seconds)}s ago`;
+  const m = seconds / 60;
+  if (m < 90) return `${Math.round(m)}m ago`;
+  const h = m / 60;
+  if (h < 48) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }

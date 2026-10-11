@@ -3,7 +3,7 @@
 
 import { Chart, colorFor } from "./charts.js";
 import { prepare } from "./layout.js";
-import { escapeHtml, fmtBytes, fmtCount, markdown, plural, setUnits } from "./util.js";
+import { escapeHtml, fmtAgo, fmtBytes, fmtCount, markdown, plural, setUnits } from "./util.js";
 
 const T = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -95,24 +95,34 @@ async function showStart() {
       const used = v.total > 0 ? Math.round(((v.total - v.free) / v.total) * 100) : 0;
       const gauge = used >= 90 ? "var(--warn)" : "var(--accent)";
       const kind = v.network ? `Network share, ${escapeHtml(v.source)}` : `${v.removable ? "Removable, " : ""}${escapeHtml(v.fs.toUpperCase())}`;
+      // A volume that is already scanned (or still scanning in the background)
+      // opens straight into that scan instead of starting over.
+      const scanned = v.scan
+        ? `<span class="volume-scanned">${v.scan.scanning ? "· Scanning…" : `· Scanned ${fmtAgo(v.scan.age_seconds)}, ${fmtBytes(v.scan.size)}`}</span>`
+        : "";
+      const actions = v.scan
+        ? `<button class="primary" data-open="${i}">${v.scan.scanning ? "Resume" : "Open"}</button><button data-rescan="${i}">Rescan</button>`
+        : `<button class="primary" data-open="${i}">Scan</button>`;
       return `<li class="volume">
         <div class="gauge" style="--used:${used};--gauge:${gauge}"><span>${used}%</span></div>
-        <div><div class="volume-name">${escapeHtml(v.name)}</div><div class="volume-meta">${kind}</div></div>
+        <div><div class="volume-name">${escapeHtml(v.name)}</div><div class="volume-meta">${kind} ${scanned}</div></div>
         <div class="volume-free"><strong>${fmtBytes(v.free)}</strong> free<br>of ${fmtBytes(v.total)}</div>
-        <button class="primary" data-volume="${i}">Scan</button>
+        <div class="volume-actions">${actions}</div>
       </li>`;
     })
     .join("");
-  for (const b of $("volumes").querySelectorAll("button")) b.onclick = () => startScan(volumes[Number(b.dataset.volume)].mount);
+  for (const b of $("volumes").querySelectorAll("[data-open]")) b.onclick = () => startScan(volumes[Number(b.dataset.open)].mount);
+  for (const b of $("volumes").querySelectorAll("[data-rescan]")) b.onclick = () => startScan(volumes[Number(b.dataset.rescan)].mount, true);
 }
 
 // ---- Scanning -------------------------------------------------------------
 
 let pollTimer;
 
-async function startScan(path) {
+/** Open `path`. Reopens a warm scan of the same folder unless `force` is set. */
+async function startScan(path, force = false) {
   try {
-    await call("start_scan", { path });
+    await call("start_scan", { path, force });
   } catch (e) {
     return fail(e);
   }
@@ -1037,7 +1047,7 @@ $("up").onclick = goUp;
 $("rescan").onclick = async () => {
   if (state.progress?.scanning) return call("stop_scan").catch(fail);
   const root = state.view?.crumbs[0];
-  if (root) startScan(await call("path", { id: root.id }));
+  if (root) startScan(await call("path", { id: root.id }), true);
 };
 
 $("scan-home").onclick = async () => startScan(await call("home"));

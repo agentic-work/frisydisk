@@ -302,3 +302,118 @@ fn api_scan_view_collect_and_trash() {
     assert_eq!(api.call("advisor_poll", &json!({})).unwrap()["started"], false);
     assert!(api.call("nonsense", &json!({})).is_err());
 }
+
+/// Poll `status` until the open scan finishes.
+fn wait_for_scan(api: &Api) {
+    while api.call("status", &json!({})).unwrap()["progress"]["scanning"] == true {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn closing_and_reopening_a_scan_does_not_rescan() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "a.bin", 50_000);
+    let api = Api::new();
+    let path = r.to_str().unwrap();
+
+    let opened = api.call("start_scan", &json!({ "path": path })).unwrap();
+    assert_eq!(opened["cached"], false);
+    wait_for_scan(&api);
+    let size = api.call("view", &json!({ "focus": 0 })).unwrap()["tree"]["size"].as_u64().unwrap();
+    assert!(size > 0);
+
+    api.call("close_scan", &json!({})).unwrap();
+    assert_eq!(api.call("status", &json!({})).unwrap()["open"], false);
+
+    // A real rescan would pick this up; reopening the warm scan must not.
+    write(r, "b.bin", 50_000);
+    let reopened = api.call("start_scan", &json!({ "path": path })).unwrap();
+    assert_eq!(reopened["cached"], true);
+    assert_eq!(reopened["finished"], true);
+    let after = api.call("view", &json!({ "focus": 0 })).unwrap()["tree"]["size"].as_u64().unwrap();
+    assert_eq!(after, size, "reopened the cached scan instead of scanning again");
+}
+
+#[test]
+fn force_rescans_even_when_a_warm_copy_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "a.bin", 50_000);
+    let api = Api::new();
+    let path = r.to_str().unwrap();
+
+    api.call("start_scan", &json!({ "path": path })).unwrap();
+    wait_for_scan(&api);
+    let before = api.call("view", &json!({ "focus": 0 })).unwrap()["tree"]["size"].as_u64().unwrap();
+    api.call("close_scan", &json!({})).unwrap();
+
+    write(r, "b.bin", 50_000);
+    let forced = api.call("start_scan", &json!({ "path": path, "force": true })).unwrap();
+    assert_eq!(forced["cached"], false);
+    wait_for_scan(&api);
+    let after = api.call("view", &json!({ "focus": 0 })).unwrap()["tree"]["size"].as_u64().unwrap();
+    assert!(after > before, "a forced rescan should see the new file");
+}
+
+#[test]
+fn collector_items_are_restored_before_a_scan_is_cached() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "keep.bin", 10_000);
+    write(r, "staged.bin", 20_000);
+    let api = Api::new();
+    let path = r.to_str().unwrap();
+
+    api.call("start_scan", &json!({ "path": path })).unwrap();
+    wait_for_scan(&api);
+    let v = api.call("view", &json!({ "focus": 0 })).unwrap();
+    let total = v["tree"]["size"].as_u64().unwrap();
+    let staged_id = v["rows"].as_array().unwrap().iter().find(|row| row["name"] == "staged.bin").unwrap()["id"].as_u64().unwrap();
+    api.call("stage", &json!({ "id": staged_id })).unwrap();
+    assert!(api.call("view", &json!({ "focus": 0 })).unwrap()["tree"]["size"].as_u64().unwrap() < total);
+
+    // Closing with something staged, but not trashed, must not lose it.
+    api.call("close_scan", &json!({})).unwrap();
+    let reopened = api.call("start_scan", &json!({ "path": path })).unwrap();
+    assert_eq!(reopened["cached"], true);
+    let after = api.call("view", &json!({ "focus": 0 })).unwrap();
+    assert_eq!(after["tree"]["size"].as_u64().unwrap(), total, "staged item must be back in the tree");
+    assert_eq!(after["collector"]["items"].as_array().unwrap().len(), 0, "the collector itself starts empty again");
+}
+
+#[test]
+fn the_warm_cache_is_bounded_and_evicts_the_oldest() {
+    let dirs: Vec<_> = (0..5).map(|_| tempfile::tempdir().unwrap()).collect();
+    for d in &dirs {
+        write(d.path(), "f.bin", 1000);
+    }
+    let api = Api::new();
+    for d in &dirs {
+        api.call("start_scan", &json!({ "path": d.path().to_str().unwrap() })).unwrap();
+        wait_for_scan(&api);
+        api.call("close_scan", &json!({})).unwrap();
+    }
+
+    // Cap is 4; the oldest of the 5 should have been evicted and so rescans.
+    let oldest = api.call("start_scan", &json!({ "path": dirs[0].path().to_str().unwrap() })).unwrap();
+    assert_eq!(oldest["cached"], false);
+    wait_for_scan(&api);
+    api.call("close_scan", &json!({})).unwrap();
+
+    // The most recently closed one is still warm.
+    let newest = api.call("start_scan", &json!({ "path": dirs[4].path().to_str().unwrap() })).unwrap();
+    assert_eq!(newest["cached"], true);
+}
+
+#[test]
+fn volumes_reports_without_erroring_whether_or_not_anything_is_open() {
+    let api = Api::new();
+    assert!(api.call("volumes", &json!({})).unwrap().is_array());
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "f.bin", 1000);
+    api.call("start_scan", &json!({ "path": dir.path().to_str().unwrap() })).unwrap();
+    wait_for_scan(&api);
+    assert!(api.call("volumes", &json!({})).unwrap().is_array());
+}

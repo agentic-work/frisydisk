@@ -194,6 +194,9 @@ input[type="text"], input[type="search"], input[type="number"], select {
 .volume-meta { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .volume-free { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; }
 .volume-free strong { color: var(--text); font-weight: 600; }
+.volume-scanned { color: var(--accent); }
+.volume-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.volume-actions button { white-space: nowrap; }
 
 .path-form {
   display: flex;

@@ -12,10 +12,20 @@ use crate::settings::Settings;
 use crate::tree::{NodeId, Tree, FLAG_DETACHED};
 use crate::view;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+/// Finished (or still-running) scans kept warm so leaving one and coming back
+/// does not mean scanning it all over again. Bounds how much memory old scans
+/// can hold onto; the oldest is evicted (and cancelled, if still running) once
+/// a new one would push the cache over this.
+const MAX_CACHED_SCANS: usize = 4;
+
 pub struct Api {
+    /// The scan the UI is currently looking at.
     scan: Mutex<Option<Arc<Scan>>>,
+    /// Other scans kept warm, oldest first, so reopening one is instant.
+    cache: Mutex<VecDeque<Arc<Scan>>>,
     /// Nodes staged in the collector, in the order they were added.
     collector: Mutex<Vec<NodeId>>,
     advisor: Advisor,
@@ -32,6 +42,7 @@ impl Default for Api {
     fn default() -> Api {
         Api {
             scan: Mutex::new(None),
+            cache: Mutex::new(VecDeque::new()),
             collector: Mutex::new(Vec::new()),
             advisor: Advisor::default(),
             settings: Mutex::new(Settings::load()),
@@ -70,20 +81,85 @@ impl Api {
         Ok(f(&tree))
     }
 
-    pub fn start_scan(&self, path: &str) -> Result<Value, String> {
+    /// The same root path a scan of `path` would end up with, without starting one.
+    /// Used to look a path up in the cache before deciding whether to scan it.
+    fn root_of(&self, path: &str) -> String {
+        std::fs::canonicalize(path).map(|p| crate::scan::display_path(&p)).unwrap_or_else(|_| path.to_string())
+    }
+
+    /// Take the active scan out, reattaching anything staged in the collector
+    /// first so switching away from a scan never loses track of it, then keep
+    /// the scan warm in the cache.
+    fn stash_active(&self) {
+        let Some(scan) = self.scan.lock().unwrap().take() else {
+            self.collector.lock().unwrap().clear();
+            return;
+        };
+        {
+            let mut ids = self.collector.lock().unwrap();
+            if !ids.is_empty() {
+                let mut tree = scan.tree.lock().unwrap();
+                for id in ids.drain(..).rev() {
+                    tree.reattach(id);
+                }
+            }
+        }
+        self.cache_push(scan);
+    }
+
+    fn cache_take(&self, root: &str) -> Option<Arc<Scan>> {
+        let mut cache = self.cache.lock().unwrap();
+        let pos = cache.iter().position(|s| s.root_path == root)?;
+        cache.remove(pos)
+    }
+
+    fn cache_remove(&self, root: &str) {
+        self.cache.lock().unwrap().retain(|s| s.root_path != root);
+    }
+
+    /// Keep a scan warm so reopening it is instant. Evicts the oldest scan once
+    /// the cache is over `MAX_CACHED_SCANS`; an evicted scan that is still
+    /// running is cancelled, since nothing will be looking at it any more.
+    fn cache_push(&self, scan: Arc<Scan>) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.retain(|s| s.root_path != scan.root_path);
+        cache.push_back(scan);
+        while cache.len() > MAX_CACHED_SCANS {
+            if let Some(evicted) = cache.pop_front() {
+                evicted.cancel();
+            }
+        }
+    }
+
+    /// Open `path`. With a warm scan of the same folder and `force` false, that
+    /// scan is reopened instead of scanning again — including one still running
+    /// in the background after the UI left it. `force` always starts fresh.
+    pub fn start_scan(&self, path: &str, force: bool) -> Result<Value, String> {
         if !std::path::Path::new(path).is_dir() {
             return Err(format!("{path} is not a folder."));
         }
-        if let Some(old) = self.scan.lock().unwrap().take() {
-            old.cancel();
-        }
-        self.collector.lock().unwrap().clear();
+        let root = self.root_of(path);
+        self.stash_active();
         self.advisor.reset();
         *self.hidden.lock().unwrap() = None;
+
+        if force {
+            self.cache_remove(&root);
+        } else if let Some(cached) = self.cache_take(&root) {
+            let (size, files) = {
+                let tree = cached.tree.lock().unwrap();
+                (tree.nodes[0].size, tree.nodes[0].files)
+            };
+            let out = json!({ "root": cached.root_path, "cached": true, "finished": cached.is_finished(), "size": size, "files": files });
+            *self.scan.lock().unwrap() = Some(cached);
+            return Ok(out);
+        }
+
         let scan = Scan::start(path);
         let root = scan.root_path.clone();
+        let out = json!({ "root": root, "cached": false, "finished": scan.is_finished() });
         *self.scan.lock().unwrap() = Some(scan);
-        Ok(json!({ "root": root }))
+        Ok(out)
     }
 
     fn collector_json(&self, tree: &Tree) -> Value {
@@ -102,19 +178,41 @@ impl Api {
     pub fn call(&self, cmd: &str, args: &Value) -> Result<Value, String> {
         let to_json = |v: &dyn erased::Ser| v.to_value();
         match cmd {
-            "volumes" => Ok(to_json(&facts::volumes())),
+            // Each volume gains a `scan` field when a warm or active scan covers it,
+            // so the Volumes screen can offer to reopen it instead of scanning again.
+            "volumes" => {
+                let vols = facts::volumes();
+                let cache = self.cache.lock().unwrap();
+                let active = self.scan.lock().unwrap().clone();
+                let warm = |root: &str| -> Option<Value> {
+                    let scan = cache.iter().find(|s| s.root_path == root).cloned().or_else(|| active.as_ref().filter(|s| s.root_path == root).cloned())?;
+                    let (size, files) = {
+                        let tree = scan.tree.lock().unwrap();
+                        (tree.nodes[0].size, tree.nodes[0].files)
+                    };
+                    Some(json!({ "size": size, "files": files, "scanning": !scan.is_finished(), "age_seconds": scan.age_seconds() }))
+                };
+                let out: Vec<Value> = vols
+                    .into_iter()
+                    .map(|v| {
+                        let mut j = serde_json::to_value(&v).unwrap_or(Value::Null);
+                        if let Some(scan) = warm(&self.root_of(&v.mount)) {
+                            j["scan"] = scan;
+                        }
+                        j
+                    })
+                    .collect();
+                Ok(json!(out))
+            }
             "home" => Ok(json!(std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default())),
             "platform" => Ok(json!(std::env::consts::OS)),
-            "start_scan" => self.start_scan(args["path"].as_str().ok_or("missing `path`")?),
+            "start_scan" => self.start_scan(args["path"].as_str().ok_or("missing `path`")?, args["force"].as_bool().unwrap_or(false)),
             "stop_scan" => {
                 self.scan()?.cancel();
                 Ok(Value::Null)
             }
             "close_scan" => {
-                if let Some(s) = self.scan.lock().unwrap().take() {
-                    s.cancel();
-                }
-                self.collector.lock().unwrap().clear();
+                self.stash_active();
                 self.advisor.reset();
                 Ok(Value::Null)
             }
